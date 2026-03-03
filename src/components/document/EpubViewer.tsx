@@ -346,7 +346,7 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
       <div className="epub-sidebar">
         <div className="epub-sidebar-title">Contents</div>
         <ScrollArea.Root className="epub-toc-scroll">
-          <ScrollArea.Viewport>
+          <ScrollArea.Viewport className="epub-toc-viewport">
             <div className="epub-toc">
               {toc.map((item, index) => (
                 <button

@@ -1600,6 +1600,11 @@ body {
 .epub-toc-scroll {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+.epub-toc-viewport {
+  height: 100%;
 }
 
 .epub-toc {
