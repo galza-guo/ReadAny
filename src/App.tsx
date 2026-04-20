@@ -13,18 +13,20 @@ import type { NavItem } from "epubjs";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import * as Dialog from "@radix-ui/react-dialog";
 import * as Toolbar from "@radix-ui/react-toolbar";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { PdfNavigationSidebar } from "./components/PdfNavigationSidebar";
 import { PdfViewer } from "./components/PdfViewer";
 import { TranslationPane } from "./components/TranslationPane";
+import { DocumentStatusSurface } from "./components/document/DocumentStatusSurface";
 import { EpubNavigationSidebar } from "./components/document/EpubNavigationSidebar";
 import { EpubViewer, type EpubParagraph, type EpubViewerHandle } from "./components/document/EpubViewer";
 import { ChatPanel } from "./components/reader/ChatPanel";
+import { ExpandableIconButton } from "./components/reader/ExpandableIconButton";
+import { PageNavigationToolbar } from "./components/reader/PageNavigationToolbar";
 import { PanelToggleGroup } from "./components/reader/PanelToggleGroup";
-import { SettingsDialogContent } from "./components/settings/SettingsDialogContent";
+import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { ThemeToggleButton } from "./components/ThemeToggleButton";
 import { HomeView } from "./views/HomeView";
 import {
@@ -33,6 +35,7 @@ import {
   getActivePreset,
   getDefaultModelForProvider,
   getNextThemeMode,
+  getPresetValidationState,
   normalizePresetDraft,
 } from "./lib/appSettings";
 import { extractPageParagraphs } from "./lib/textExtraction";
@@ -53,6 +56,7 @@ import {
   clampReaderColumnPairSizes,
   clampReaderRailSectionPairSizes,
   DEFAULT_READER_PANELS,
+  didReaderRailBecomeVisible,
   getReaderColumnLayoutKey,
   getReaderColumnMinWidth,
   getReaderRailLayoutKey,
@@ -77,6 +81,7 @@ import {
   dequeueNextPage,
   enqueueBackgroundPages,
   enqueueForegroundPage,
+  getEpubSectionTranslationProgress,
   getFullBookActionLabel,
   getPageTranslationProgress,
   isRequestVersionCurrent,
@@ -90,7 +95,6 @@ import type {
   RecentBook,
   SelectionTranslation,
   TranslationPreset,
-  TranslationProviderKind,
   TranslationSettings,
   WordDefinition,
   WordTranslation,
@@ -136,7 +140,8 @@ export default function App() {
   const [settings, setSettings] = useState<TranslationSettings>(DEFAULT_SETTINGS);
   const [hoverPid, setHoverPid] = useState<string | null>(null);
   const [activePid, setActivePid] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string>("Open a document to get started.");
+  const [documentStatusMessage, setDocumentStatusMessage] = useState<string | null>(null);
+  const [translationStatusMessage, setTranslationStatusMessage] = useState<string | null>(null);
   const [readerPanels, setReaderPanels] = useState(DEFAULT_READER_PANELS);
   const [readerColumnWeights, setReaderColumnWeights] = useState<ReaderColumnWeightsByLayout>({});
   const [readerRailSectionWeights, setReaderRailSectionWeights] =
@@ -191,7 +196,6 @@ export default function App() {
   const epubScrollRequestIdRef = useRef(0);
   const readerShellRef = useRef<HTMLDivElement | null>(null);
   const readerHeaderRef = useRef<HTMLDivElement | null>(null);
-  const readerStatusBarRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<ReaderColumnKey, HTMLElement | null>>({
     navigation: null,
     original: null,
@@ -222,6 +226,7 @@ export default function App() {
     layoutKey: string;
   } | null>(null);
   const didMountPdfNavPrefsRef = useRef(false);
+  const previousReaderPanelsRef = useRef(readerPanels);
 
   const persistPdfNavPrefs = useCallback(
     () => {
@@ -324,21 +329,34 @@ export default function App() {
     [cachedPageTranslations, pageTranslations, pages]
   );
 
-  const pageTranslationProgressLabel = useMemo(() => {
-    if (currentFileType !== "pdf" || !allPdfPagesExtracted || pageTranslationProgress.totalCount === 0) {
+  const epubSectionTranslationProgress = useMemo(
+    () => getEpubSectionTranslationProgress(pages),
+    [pages]
+  );
+
+  const translationProgress = useMemo(
+    () => (currentFileType === "pdf" ? pageTranslationProgress : epubSectionTranslationProgress),
+    [currentFileType, epubSectionTranslationProgress, pageTranslationProgress]
+  );
+
+  const translationProgressLabel = useMemo(() => {
+    if (
+      (currentFileType === "pdf" && !allPdfPagesExtracted) ||
+      translationProgress.totalCount === 0
+    ) {
       return null;
     }
 
-    if (pageTranslationProgress.isFullyTranslated) {
+    if (translationProgress.isFullyTranslated) {
       return "Fully translated";
     }
 
-    return `${pageTranslationProgress.translatedCount}/${pageTranslationProgress.totalCount} pages`;
-  }, [allPdfPagesExtracted, currentFileType, pageTranslationProgress]);
+    return `${translationProgress.translatedCount}/${translationProgress.totalCount} ${translationProgress.unitLabel} translated`;
+  }, [allPdfPagesExtracted, currentFileType, translationProgress]);
 
   const translateAllActionLabel = useMemo(
-    () => getFullBookActionLabel(pageTranslationProgress),
-    [pageTranslationProgress]
+    () => getFullBookActionLabel(translationProgress),
+    [translationProgress]
   );
 
   const currentPdfPagePayload = useMemo(() => {
@@ -355,9 +373,8 @@ export default function App() {
     Boolean(currentPdfPagePayload && hasUsablePageText(currentPdfPagePayload.displayText));
 
   const canTranslateAll =
-    currentFileType === "pdf" &&
-    allPdfPagesExtracted &&
-    pageTranslationProgress.totalCount > 0;
+    ((currentFileType === "pdf" && allPdfPagesExtracted) || currentFileType === "epub") &&
+    translationProgress.totalCount > 0;
 
   const visibleReaderColumns = useMemo(
     () => getVisibleReaderColumns(readerPanels),
@@ -399,43 +416,23 @@ export default function App() {
     [readerPanels]
   );
 
-  const readerStatusLabel = useMemo(() => {
-    if (
-      statusMessage.startsWith("Loading PDF") ||
-      statusMessage.startsWith("Loading EPUB") ||
-      statusMessage.startsWith("Loading document")
-    ) {
-      return getReaderStatusLabel("loading-document");
-    }
-
-    if (statusMessage.startsWith("Extracting text")) {
-      return getReaderStatusLabel("extracting-text");
-    }
-
-    const translatingMatch = statusMessage.match(/Translating page (\d+)/);
-    if (translatingMatch) {
-      return getReaderStatusLabel("translating-page", {
-        page: Number(translatingMatch[1]),
-      });
-    }
-
-    const redoingMatch = statusMessage.match(/Redoing translation for page (\d+)/);
-    if (redoingMatch) {
-      return getReaderStatusLabel("redoing-page", {
-        page: Number(redoingMatch[1]),
-      });
-    }
-
-    if (statusMessage.startsWith("Ready") || statusMessage.startsWith("Background page translation finished")) {
-      return getReaderStatusLabel("ready");
-    }
-
-    return statusMessage;
-  }, [statusMessage]);
-
   const togglePanel = useCallback((panel: ReaderPanelKey) => {
     setReaderPanels((prev) => toggleReaderPanel(prev, panel));
   }, []);
+
+  useEffect(() => {
+    const previousPanels = previousReaderPanelsRef.current;
+    previousReaderPanelsRef.current = readerPanels;
+
+    if (
+      currentFileType === "pdf" &&
+      readerPanels.original &&
+      pdfZoomMode !== "fit-width" &&
+      didReaderRailBecomeVisible(previousPanels, readerPanels)
+    ) {
+      setPdfZoomMode("fit-width");
+    }
+  }, [currentFileType, pdfZoomMode, readerPanels]);
 
   const setColumnElementRef = useCallback(
     (column: ReaderColumnKey) => (element: HTMLElement | null) => {
@@ -728,9 +725,8 @@ export default function App() {
       Number.parseFloat(shellStyles.paddingBottom || "0");
     const rowGap = Number.parseFloat(shellStyles.rowGap || shellStyles.gap || "0");
     const headerHeight = Math.ceil(readerHeaderRef.current?.getBoundingClientRect().height ?? 0);
-    const statusHeight = Math.ceil(readerStatusBarRef.current?.getBoundingClientRect().height ?? 0);
     const minWidth = Math.ceil(workspaceMinWidth + paddingX);
-    const minHeight = Math.ceil(workspaceMinHeight + paddingY + headerHeight + statusHeight + rowGap * 2);
+    const minHeight = Math.ceil(workspaceMinHeight + paddingY + headerHeight + rowGap);
 
     void getCurrentWindow()
       .setSizeConstraints({
@@ -756,19 +752,14 @@ export default function App() {
   useEffect(() => {
     invoke<TranslationSettings>("get_app_settings")
       .then((loadedSettings) => {
-        setSettings(
-          loadedSettings.presets.length > 0 ? loadedSettings : createDefaultSettings()
-        );
+        setSettings(loadedSettings);
       })
       .catch((error) => {
         console.error("Failed to load app settings:", error);
       });
   }, []);
 
-  const activePreset = useMemo(
-    () => getActivePreset(settings) ?? settings.presets[0],
-    [settings]
-  );
+  const activePreset = useMemo(() => getActivePreset(settings), [settings]);
 
   const buildPersistableSettings = useCallback(
     (nextSettings: TranslationSettings) => ({
@@ -858,7 +849,8 @@ export default function App() {
     setEpubCurrentChapter("");
     setPendingEpubNavigationHref(null);
     setLoadingProgress(0);
-    setStatusMessage("Loading PDF...");
+    setDocumentStatusMessage(getReaderStatusLabel("loading-document"));
+    setTranslationStatusMessage(null);
     setPdfDoc(null);
     setPdfOutline([]);
     setPages([]);
@@ -980,7 +972,7 @@ export default function App() {
       setPages(initialPages);
       setDocId(nextDocId);
       setCurrentPage(startPage || 1);
-      setStatusMessage("Extracting text for page translation...");
+      setDocumentStatusMessage(getReaderStatusLabel("extracting-text"));
 
       for (let i = 1; i <= doc.numPages; i += 1) {
         const page = await doc.getPage(i);
@@ -1013,7 +1005,7 @@ export default function App() {
       }
 
       setLoadingProgress(null);
-      setStatusMessage("Ready. Read page by page and select text for quick help.");
+      setDocumentStatusMessage(null);
     } catch (error) {
       if (isStaleLoad()) {
         return;
@@ -1021,8 +1013,7 @@ export default function App() {
 
       console.error("Failed to load PDF:", error);
       setLoadingProgress(null);
-      setStatusMessage("Failed to load PDF. The file may have been moved or deleted.");
-      setAppView("home");
+      setDocumentStatusMessage("Failed to load PDF. The file may have been moved or deleted.");
     } finally {
       if (!committedDoc) {
         if (loadedDoc) {
@@ -1054,7 +1045,8 @@ export default function App() {
     setCachedPageTranslations([]);
     setSelectionTranslation(null);
     setLoadingProgress(0);
-    setStatusMessage("Loading EPUB...");
+    setDocumentStatusMessage(getReaderStatusLabel("loading-document"));
+    setTranslationStatusMessage(null);
     setPdfScrollAnchor("top");
     setPendingEpubScroll(null);
     setScrollToTranslationPage(null);
@@ -1088,8 +1080,6 @@ export default function App() {
       setEpubData(bytes);
       setDocId(nextDocId);
       setCurrentPage(startPage || 1);
-      setLoadingProgress(null);
-      setStatusMessage("Ready. EPUB translation stays available paragraph by paragraph.");
 
       // Add to recent books (will be updated with proper metadata from EPUB)
       try {
@@ -1108,9 +1098,8 @@ export default function App() {
       }
     } catch (error) {
       console.error("Failed to load EPUB:", error);
-      setStatusMessage("Failed to load EPUB. The file may have been moved or deleted.");
+      setDocumentStatusMessage("Failed to load EPUB. The file may have been moved or deleted.");
       setLoadingProgress(null);
-      setAppView("home");
     }
   }, []);
 
@@ -1195,6 +1184,13 @@ export default function App() {
     setEpubTotalPages(total);
   }, []);
 
+  const handleEpubLoadingProgress = useCallback((progress: number | null) => {
+    setLoadingProgress(progress);
+    setDocumentStatusMessage(
+      progress === null ? null : getReaderStatusLabel("loading-document")
+    );
+  }, []);
+
   const handleEpubTocChange = useCallback((toc: NavItem[]) => {
     setEpubToc(toc);
   }, []);
@@ -1256,6 +1252,8 @@ export default function App() {
     setPdfScrollAnchor("top");
     setCurrentFilePath(null);
     setCurrentBookTitle(null);
+    setDocumentStatusMessage(null);
+    setTranslationStatusMessage(null);
     setSelectionTranslation(null);
     setWordTranslation(null);
     setEpubToc([]);
@@ -1300,35 +1298,74 @@ export default function App() {
     }));
   }, []);
 
-  const handleAddPreset = useCallback((providerKind: TranslationProviderKind) => {
+  const handleAddPreset = useCallback(() => {
     let createdPreset: TranslationPreset | undefined;
 
     setSettings((prev) => {
-      createdPreset = createPresetDraft(providerKind, prev.presets);
+      const nextPreset = createPresetDraft("openai-compatible", prev.presets);
+      createdPreset = nextPreset;
       return {
         ...prev,
-        activePresetId: createdPreset.id,
-        presets: [...prev.presets, createdPreset],
+        activePresetId: nextPreset.id,
+        presets: [...prev.presets, nextPreset],
       };
     });
 
-    if (createdPreset) {
-      const nextPreset = createdPreset;
-      setPresetStatuses((prev) => ({
-        ...prev,
-        [nextPreset.id]: undefined,
-      }));
+    if (!createdPreset) {
+      return "";
     }
+
+    const nextPreset = createdPreset;
+    setPresetStatuses((prev) => ({
+      ...prev,
+      [nextPreset.id]: undefined,
+    }));
+
+    return nextPreset.id;
+  }, []);
+
+  const handleDeletePreset = useCallback((presetId: string) => {
+    setSettings((prev) => {
+      const nextPresets = prev.presets.filter((preset) => preset.id !== presetId);
+      const nextActivePresetId =
+        prev.activePresetId !== presetId
+          ? nextPresets.some((preset) => preset.id === prev.activePresetId)
+            ? prev.activePresetId
+            : (nextPresets[0]?.id ?? "")
+          : (nextPresets[0]?.id ?? "");
+
+      return {
+        ...prev,
+        activePresetId: nextActivePresetId,
+        presets: nextPresets,
+      };
+    });
+    setPresetStatuses((prev) => {
+      const { [presetId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setPresetApiKeyDrafts((prev) => {
+      const { [presetId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setPresetModels((prev) => {
+      const { [presetId]: _removed, ...rest } = prev;
+      return rest;
+    });
   }, []);
 
   const handlePresetChange = useCallback((nextPreset: TranslationPreset) => {
+    const currentPreset = settings.presets.find((preset) => preset.id === nextPreset.id);
+    const providerChanged =
+      currentPreset?.providerKind !== undefined &&
+      currentPreset.providerKind !== nextPreset.providerKind;
+
     setSettings((prev) => {
-      const currentPreset = prev.presets.find((preset) => preset.id === nextPreset.id);
       const candidate =
-        currentPreset && currentPreset.providerKind !== nextPreset.providerKind
+        providerChanged
           ? {
               ...nextPreset,
-              model: getDefaultModelForProvider(nextPreset.providerKind),
+              model: "",
               baseUrl:
                 nextPreset.providerKind === "openai-compatible"
                   ? nextPreset.baseUrl
@@ -1350,7 +1387,14 @@ export default function App() {
       ...prev,
       [nextPreset.id]: undefined,
     }));
-  }, []);
+
+    if (providerChanged) {
+      setPresetModels((prev) => {
+        const { [nextPreset.id]: _removed, ...rest } = prev;
+        return rest;
+      });
+    }
+  }, [settings.presets]);
 
   const handleSaveSettings = useCallback(async () => {
     const saved = await persistSettings(settings, {
@@ -1558,10 +1602,8 @@ export default function App() {
         error: undefined,
       },
     }));
-
-    if (isTranslateAllRunningRef.current) {
-      setStatusMessage(`Translating page ${nextPage} of ${pagesRef.current.length}...`);
-    }
+    setTranslationStatusMessage(getReaderStatusLabel("translating-page", { page: nextPage }));
+    let didError = false;
 
     try {
       const currentSettings = settingsRef.current;
@@ -1614,6 +1656,7 @@ export default function App() {
         return;
       }
 
+      didError = true;
       setPageTranslations((prev) => ({
         ...prev,
         [nextPage]: {
@@ -1625,6 +1668,7 @@ export default function App() {
           error: String(error),
         },
       }));
+      setTranslationStatusMessage(`Translation error: ${String(error)}`);
     } finally {
       pageTranslatingRef.current = false;
       pageTranslationInFlightRef.current = null;
@@ -1634,13 +1678,17 @@ export default function App() {
       ) {
         isTranslateAllRunningRef.current = false;
         setIsTranslateAllRunning(false);
-        setStatusMessage("Background page translation finished.");
+        if (!didError) {
+          setTranslationStatusMessage(null);
+        }
       }
       if (
         foregroundPageTranslateQueueRef.current.length > 0 ||
         backgroundPageTranslateQueueRef.current.length > 0
       ) {
         void runPageTranslationQueue();
+      } else if (!didError) {
+        setTranslationStatusMessage(null);
       }
     }
   }, [currentFileType]);
@@ -1841,7 +1889,7 @@ export default function App() {
             docId: docIdRef.current,
           });
         } catch (error) {
-          setStatusMessage(`Failed to reset page translation cache: ${String(error)}`);
+          setTranslationStatusMessage(`Failed to reset page translation cache: ${String(error)}`);
           isTranslateAllRunningRef.current = false;
           setIsTranslateAllRunning(false);
           return;
@@ -1852,12 +1900,12 @@ export default function App() {
           priority: "background",
           forceFresh: true,
         });
-        setStatusMessage("Redoing page translations in the background...");
+        setTranslationStatusMessage("Retranslating all pages...");
       } else {
         queuePagesForTranslation(pageNumbers, {
           priority: "background",
         });
-        setStatusMessage("Translating all pages in the background...");
+        setTranslationStatusMessage("Translating all pages...");
       }
 
       setTranslateAllDialogOpen(false);
@@ -1901,7 +1949,7 @@ export default function App() {
           page: pageNumber,
         });
       } catch (error) {
-        setStatusMessage(`Failed to reset page translation cache: ${String(error)}`);
+        setTranslationStatusMessage(`Failed to reset page translation cache: ${String(error)}`);
         return;
       }
 
@@ -1910,17 +1958,76 @@ export default function App() {
         priority: "foreground",
         forceFresh: true,
       });
-      setStatusMessage(`Redoing translation for page ${pageNumber}...`);
+      setTranslationStatusMessage(getReaderStatusLabel("redoing-page", { page: pageNumber }));
     },
     [currentFileType, queuePagesForTranslation]
   );
 
   const handleTranslateAllAction = useCallback(() => {
-    if (currentFileType !== "pdf" || !allPdfPagesExtracted || isTranslateAllRunningRef.current) {
+    if (isTranslateAllRunningRef.current) {
       return;
     }
 
-    if (translateAllActionLabel === "Replace All") {
+    if (currentFileType === "epub") {
+      if (translatingRef.current) {
+        return;
+      }
+
+      const shouldRetranslateAll = translationProgress.isFullyTranslated;
+      const nextPages = pagesRef.current.map((page) => ({
+        ...page,
+        paragraphs: page.paragraphs.map((paragraph) => {
+          if (!hasUsablePageText(paragraph.source)) {
+            return paragraph;
+          }
+
+          if (!shouldRetranslateAll) {
+            return paragraph;
+          }
+
+          return {
+            ...paragraph,
+            translation: undefined,
+            status: "idle" as const,
+          };
+        }),
+      }));
+
+      const paragraphIds = nextPages
+        .flatMap((page) => page.paragraphs)
+        .filter((paragraph) => hasUsablePageText(paragraph.source))
+        .filter((paragraph) =>
+          shouldRetranslateAll ? true : paragraph.status === "idle" || paragraph.status === "error"
+        )
+        .map((paragraph) => paragraph.pid);
+
+      if (paragraphIds.length === 0) {
+        return;
+      }
+
+      if (shouldRetranslateAll) {
+        pagesRef.current = nextPages;
+        setPages(nextPages);
+      }
+
+      isTranslateAllRunningRef.current = true;
+      setIsTranslateAllRunning(true);
+      setTranslationStatusMessage(
+        shouldRetranslateAll ? "Retranslating all sections..." : "Translating all sections..."
+      );
+      translateQueueRef.current = Array.from(new Set([...translateQueueRef.current, ...paragraphIds]));
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = window.setTimeout(() => {
+        void runTranslateQueue();
+      }, 0);
+      return;
+    }
+
+    if (currentFileType !== "pdf" || !allPdfPagesExtracted) {
+      return;
+    }
+
+    if (translationProgress.isFullyTranslated) {
       void startTranslateAll("replace-all");
       return;
     }
@@ -1941,7 +2048,7 @@ export default function App() {
     currentFileType,
     currentPage,
     startTranslateAll,
-    translateAllActionLabel,
+    translationProgress.isFullyTranslated,
   ]);
 
   const handlePdfSelectionTranslate = useCallback(
@@ -2036,6 +2143,7 @@ export default function App() {
 
     translatingRef.current = true;
     const requestId = ++translationRequestId.current;
+    const isBulkRun = currentFileType === "epub" && isTranslateAllRunningRef.current;
 
     setPages((prev) =>
       prev.map((page) => ({
@@ -2047,7 +2155,13 @@ export default function App() {
         ),
       }))
     );
+    if (currentFileType === "epub") {
+      setTranslationStatusMessage(
+        isBulkRun ? "Translating all sections..." : getReaderStatusLabel("translating-section")
+      );
+    }
 
+    let didError = false;
     try {
       const payload = pending.map((para) => ({ sid: para.pid, text: para.source }));
       const invokeWithTimeout = <T,>(promise: Promise<T>, timeoutMs: number) => {
@@ -2104,6 +2218,7 @@ export default function App() {
         }))
       );
     } catch (error) {
+      didError = true;
       setPages((prev) =>
         prev.map((page) => ({
           ...page,
@@ -2119,7 +2234,7 @@ export default function App() {
         errorText.includes("API key is missing") || errorText.includes("openrouter_key.txt")
         ? "API key is not configured for the active preset."
         : `Translation error: ${errorText}`;
-      setStatusMessage(friendlyMessage);
+      setTranslationStatusMessage(friendlyMessage);
     } finally {
       translatingRef.current = false;
       if (translateQueueRef.current.length > 0) {
@@ -2127,9 +2242,17 @@ export default function App() {
         debounceRef.current = window.setTimeout(() => {
           void runTranslateQueue();
         }, 0);
+      } else {
+        if (isBulkRun) {
+          isTranslateAllRunningRef.current = false;
+          setIsTranslateAllRunning(false);
+        }
+        if (!didError) {
+          setTranslationStatusMessage(null);
+        }
       }
     }
-  }, []);
+  }, [currentFileType]);
 
   const handleTranslatePid = useCallback(
     (pid: string, forceRetry = false) => {
@@ -2143,12 +2266,15 @@ export default function App() {
       if (para.status === "done" && !forceRetry) return;
 
       translateQueueRef.current = Array.from(new Set([...translateQueueRef.current, pid]));
+      if (currentFileType === "epub") {
+        setTranslationStatusMessage(getReaderStatusLabel("translating-section"));
+      }
       window.clearTimeout(debounceRef.current);
       debounceRef.current = window.setTimeout(() => {
         void runTranslateQueue();
       }, 400);
     },
-    [runTranslateQueue]
+    [currentFileType, runTranslateQueue]
   );
 
   const handleLocatePid = useCallback(
@@ -2255,6 +2381,15 @@ export default function App() {
   const handleZoomChange = (nextScale: number) => {
     setScale(nextScale);
   };
+
+  const handleEpubPageStep = useCallback((direction: "prev" | "next") => {
+    if (direction === "prev") {
+      epubViewerRef.current?.goToPreviousPage();
+      return;
+    }
+
+    epubViewerRef.current?.goToNextPage();
+  }, []);
 
   const handlePdfZoomModeChange = useCallback((nextMode: PdfZoomMode) => {
     setPdfZoomMode(nextMode);
@@ -2484,6 +2619,11 @@ export default function App() {
     resolvedPdfScale,
   ]);
 
+  const hasInvalidPreset = settings.presets.some(
+    (preset) =>
+      !getPresetValidationState(preset, presetApiKeyDrafts[preset.id] ?? "").isValid
+  );
+
   const settingsDialogProps = {
     settings,
     activePreset,
@@ -2492,9 +2632,11 @@ export default function App() {
     presetSaving,
     presetModelsLoading,
     testAllRunning: testAllPresetsRunning,
+    testAllDisabled: hasInvalidPreset,
     presetModels,
     onSettingsChange: setSettings,
     onAddPreset: handleAddPreset,
+    onDeletePreset: handleDeletePreset,
     onPresetSelect: handlePresetSelect,
     onPresetChange: handlePresetChange,
     onPresetApiKeyInputChange: (apiKey: string) => {
@@ -2510,80 +2652,81 @@ export default function App() {
     onTestAllPresets: handleTestAllPresets,
   };
 
-  // Show home view
-  if (appView === "home") {
-    return (
-      <HomeView
-        onOpenBook={handleOpenBook}
-        onOpenFile={handleOpenFile}
-        theme={settings.theme}
-        onThemeToggle={handleThemeToggle}
-        settingsDialogProps={settingsDialogProps}
-      />
-    );
-  }
+  const sharedSettingsDialog = (
+    <SettingsDialog
+      contentProps={settingsDialogProps}
+      onDone={handleSaveSettings}
+      onOpenChange={setSettingsOpen}
+      open={settingsOpen}
+      saveDisabled={presetSaving || hasInvalidPreset}
+    />
+  );
 
   const nextColumnAfterNavigation = visibleReaderColumns.includes("navigation")
     ? visibleReaderColumns.find((column) => column !== "navigation") ?? null
     : null;
+  const loadingDocumentLabel = getReaderStatusLabel("loading-document");
+  const extractingTextLabel = getReaderStatusLabel("extracting-text");
+  const hasBlockingOriginalPaneStatus =
+    !pdfDoc &&
+    !epubData &&
+    (documentStatusMessage !== null || loadingProgress !== null);
+  const hasPdfExtractionOverlay =
+    currentFileType === "pdf" &&
+    pdfDoc !== null &&
+    documentStatusMessage === extractingTextLabel;
+  const originalPaneStatusMessage =
+    documentStatusMessage ?? (loadingProgress !== null ? loadingDocumentLabel : null);
 
-  return (
+  const viewContent = appView === "home" ? (
+    <HomeView
+      onOpenBook={handleOpenBook}
+      onOpenFile={handleOpenFile}
+      onOpenSettings={() => setSettingsOpen(true)}
+      theme={settings.theme}
+      onThemeToggle={handleThemeToggle}
+    />
+  ) : (
     <Tooltip.Provider delayDuration={300}>
       <div ref={readerShellRef} className="app-shell app-shell-reader">
       <Toolbar.Root ref={readerHeaderRef} className="app-header" aria-label="Toolbar">
         <div className="header-left">
-          <Toolbar.Button
-            className="btn btn-ghost btn-icon-only"
+          <ExpandableIconButton
             onClick={handleBackToHome}
-            title="Back to Library"
-            aria-label="Back to Library"
+            aria-label="Home"
+            label="Home"
+            labelDirection="right"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
+              <path d="M3 10.5 12 3l9 7.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M5 9.5V21h14V9.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M10 21v-6h4v6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-          </Toolbar.Button>
-          {currentFileType === "pdf" ? (
-            <Toolbar.Button
-              className="btn"
-              onClick={handleTranslateAllAction}
-              disabled={!canTranslateAll || isTranslateAllRunning}
-            >
-              {translateAllActionLabel}
-            </Toolbar.Button>
-          ) : null}
+          </ExpandableIconButton>
         </div>
         <div className="header-center">
           <PanelToggleGroup panels={readerPanels} onToggle={togglePanel} />
         </div>
         <div className="header-right">
           <ThemeToggleButton
-            className="btn btn-ghost btn-icon-only"
+            className=""
             theme={settings.theme}
             onToggle={handleThemeToggle}
+            showHoverLabel={true}
+            labelDirection="left"
+            hoverLabel="Theme"
           />
-          <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <Dialog.Trigger asChild>
-              <Toolbar.Button className="btn btn-ghost btn-icon-only" aria-label="Settings" title="Settings">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              </Toolbar.Button>
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Overlay className="dialog-overlay" />
-              <Dialog.Content className="dialog-content dialog-content-settings">
-                <Dialog.Title className="dialog-title">Settings</Dialog.Title>
-                <Dialog.Description className="dialog-description">
-                  Configure your default language and saved translation presets.
-                </Dialog.Description>
-                <SettingsDialogContent {...settingsDialogProps} />
-                <Dialog.Close asChild>
-                  <button className="btn btn-primary">Done</button>
-                </Dialog.Close>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
+          <ExpandableIconButton
+            aria-label="Settings"
+            label="Settings"
+            labelDirection="left"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </ExpandableIconButton>
         </div>
       </Toolbar.Root>
       <main
@@ -2647,32 +2790,55 @@ export default function App() {
           <div className="pane-body">
             {currentFileType === "epub" && epubData ? (
               <div className={`epub-original-host ${readerPanels.original ? "" : "is-detached"}`}>
-                <div className="epub-original-toolbar">
-                  <div className="page-info">
-                    Page {currentPage} of {totalPages || "-"}
+                <PageNavigationToolbar
+                  previousLabel="Previous page"
+                  nextLabel="Next page"
+                  previousDisabled={currentPage <= 1}
+                  nextDisabled={currentPage >= epubTotalPages}
+                  onPrevious={() => handleEpubPageStep("prev")}
+                  onNext={() => handleEpubPageStep("next")}
+                >
+                  <div className="document-page-label">
+                    Page {currentPage} of {epubTotalPages || "-"}
                   </div>
-                  <div className="zoom-controls">
-                    <Toolbar.Button className="btn btn-ghost btn-icon-only" onClick={() => handleScaleStep("out")}>
-                      -
-                    </Toolbar.Button>
-                    <div className="epub-scale-readout">{Math.round(scale * 100)}%</div>
-                    <Toolbar.Button className="btn btn-ghost btn-icon-only" onClick={() => handleScaleStep("in")}>
-                      +
-                    </Toolbar.Button>
+                </PageNavigationToolbar>
+                <div className="document-viewer-shell">
+                  <EpubViewer
+                    ref={epubViewerRef}
+                    fileData={epubData}
+                    onMetadata={handleEpubMetadata}
+                    onParagraphsExtracted={handleEpubParagraphs}
+                    onCurrentPageChange={handleEpubPageChange}
+                    onTocChange={handleEpubTocChange}
+                    onCurrentChapterChange={handleEpubCurrentChapterChange}
+                    onLoadingProgress={handleEpubLoadingProgress}
+                    onHrefChange={handleEpubHrefChange}
+                    scale={scale}
+                  />
+                  <div className="document-zoom-dock epub-zoom-dock">
+                    <div className="epub-zoom-stepper">
+                      <Toolbar.Button
+                        className="btn btn-ghost btn-icon-only"
+                        onClick={() => handleScaleStep("out")}
+                        disabled={currentScaleIndex <= 0}
+                        aria-label="Zoom out"
+                        title="Zoom out"
+                      >
+                        -
+                      </Toolbar.Button>
+                      <div className="epub-zoom-readout">{Math.round(scale * 100)}%</div>
+                      <Toolbar.Button
+                        className="btn btn-ghost btn-icon-only"
+                        onClick={() => handleScaleStep("in")}
+                        disabled={currentScaleIndex >= ZOOM_LEVELS.length - 1}
+                        aria-label="Zoom in"
+                        title="Zoom in"
+                      >
+                        +
+                      </Toolbar.Button>
+                    </div>
                   </div>
                 </div>
-                <EpubViewer
-                  ref={epubViewerRef}
-                  fileData={epubData}
-                  onMetadata={handleEpubMetadata}
-                  onParagraphsExtracted={handleEpubParagraphs}
-                  onCurrentPageChange={handleEpubPageChange}
-                  onTocChange={handleEpubTocChange}
-                  onCurrentChapterChange={handleEpubCurrentChapterChange}
-                  onLoadingProgress={setLoadingProgress}
-                  onHrefChange={handleEpubHrefChange}
-                  scale={scale}
-                />
               </div>
             ) : pdfDoc ? (
               <PdfViewer
@@ -2687,8 +2853,16 @@ export default function App() {
                 onZoomModeChange={handlePdfZoomModeChange}
                 onManualScaleChange={handlePdfManualScaleChange}
                 onResolvedScaleChange={handleResolvedPdfScaleChange}
+                overlayStatusMessage={hasPdfExtractionOverlay ? extractingTextLabel : null}
+                overlayProgress={hasPdfExtractionOverlay ? loadingProgress : null}
                 onSelectionText={handlePdfSelectionTranslate}
                 onClearSelection={handleClearSelectionTranslation}
+              />
+            ) : hasBlockingOriginalPaneStatus && originalPaneStatusMessage ? (
+              <DocumentStatusSurface
+                message={originalPaneStatusMessage}
+                progress={loadingProgress}
+                variant="blocking"
               />
             ) : (
               <div className="empty-state">No document loaded.</div>
@@ -2723,6 +2897,12 @@ export default function App() {
                   mode="pdf"
                   currentPage={currentPage}
                   pageTranslation={pageTranslations[currentPage]}
+                  statusMessage={translationStatusMessage}
+                  progressLabel={translationProgressLabel}
+                  bulkActionLabel={translateAllActionLabel}
+                  onBulkAction={handleTranslateAllAction}
+                  bulkActionDisabled={!canTranslateAll || isTranslateAllRunning}
+                  bulkActionRunning={isTranslateAllRunning}
                   onRetryPage={handleRedoPageTranslation}
                   canRetryPage={canRedoCurrentPage}
                   selectionTranslation={selectionTranslation}
@@ -2733,6 +2913,12 @@ export default function App() {
                   mode="epub"
                   pages={pages}
                   currentPage={currentPage}
+                  statusMessage={translationStatusMessage}
+                  progressLabel={translationProgressLabel}
+                  bulkActionLabel={translateAllActionLabel}
+                  onBulkAction={handleTranslateAllAction}
+                  bulkActionDisabled={!canTranslateAll || isTranslateAllRunning}
+                  bulkActionRunning={isTranslateAllRunning}
                   activePid={activePid}
                   hoverPid={hoverPid}
                   onHoverPid={setHoverPid}
@@ -2772,34 +2958,13 @@ export default function App() {
           </div>
         </section>
       </main>
-      <div ref={readerStatusBarRef} className="reader-status-bar">
-        <div className="reader-status-main">
-          <span className="reader-status-text">{readerStatusLabel}</span>
-          {loadingProgress !== null ? (
-            <div className="reader-status-loading">
-              <div className="reader-status-loading-fill" style={{ width: `${loadingProgress}%` }} />
-            </div>
-          ) : null}
-        </div>
-        <div className="reader-status-meta">
-          {pageTranslationProgressLabel ? (
-            <span
-              className={`translation-progress-indicator ${
-                isTranslateAllRunning ? "is-active" : ""
-              }`}
-            >
-              {pageTranslationProgressLabel}
-            </span>
-          ) : null}
-        </div>
-      </div>
       <ConfirmationDialog
         open={translateAllDialogOpen}
         onOpenChange={setTranslateAllDialogOpen}
         title="Cached translations found"
         description={`Found ${translateAllCachedCount} translated ${
           translateAllCachedCount === 1 ? "page" : "pages"
-        } elsewhere in this PDF. Replace everything from scratch, or keep those pages and translate the rest?`}
+        } elsewhere in this PDF. Retranslate everything from scratch, or keep those pages and translate the rest?`}
         actions={[
           {
             label: "Skip Cached",
@@ -2807,7 +2972,7 @@ export default function App() {
             variant: "primary",
           },
           {
-            label: "Replace All",
+            label: "Retranslate All",
             onSelect: () => void startTranslateAll("replace-all"),
             variant: "danger",
           },
@@ -2815,5 +2980,12 @@ export default function App() {
       />
     </div>
     </Tooltip.Provider>
+  );
+
+  return (
+    <>
+      {viewContent}
+      {sharedSettingsDialog}
+    </>
   );
 }
