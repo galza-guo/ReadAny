@@ -1,6 +1,6 @@
 # PDFRead
 
-A Tauri desktop PDF bilingual reader with sentence-level alignment and translation.
+A Tauri desktop bilingual reader for PDFs, with preserved EPUB support.
 
 <p align="center">
   <img src="./screenshot.png" alt="PDFRead Screenshot" width="860" />
@@ -8,22 +8,26 @@ A Tauri desktop PDF bilingual reader with sentence-level alignment and translati
 
 ## Why PDFRead
 
-Reading technical PDFs in another language is slow. PDFRead keeps the original PDF on the left and sentence-level translations on the right, so you can scan and compare without losing your place.
+Reading a PDF in another language is slow when you have to translate paragraph by paragraph. PDFRead keeps the original page on the left and a readable translation of that same page on the right, so you can stay in flow while still checking the source.
 
-## Highlights
+## MVP Highlights
 
-- Two-column layout: PDF on the left, translations and controls on the right.
-- Sentence-level translation with aligned highlights on the PDF.
-- Read-only Slate rendering for clean, consistent text.
-- Virtualized translation list for long documents.
-- Local JSON cache for translations (no repeated costs).
+- PDF-first, single-page reading layout.
+- Current page translation with next-page prefetch.
+- Page-level local cache so reopened pages can return instantly.
+- Hidden but selectable PDF text layer for text-based and OCR-text PDFs.
+- Selection pop-up translation for words, phrases, or short sentences.
+- Provider-ready backend with OpenRouter and OpenAI-compatible endpoint support.
+- Manual model entry fallback when model listing is unavailable.
+- EPUB support remains available through the existing flow.
 
 ## How It Works
 
-- PDF rendering: pdf.js (`pdfjs-dist/legacy/build/pdf.mjs`) with text layer overlays.
-- Sentence extraction: single-column heuristic in `src/lib/textExtraction.ts`.
-- Translation pipeline: frontend -> Tauri command -> OpenRouter -> cache.
-- Cache keys: docId + sid + source text hash + model + target language.
+- Left pane: one PDF page rendered with pdf.js.
+- Right pane: one translated page for the same page number.
+- Translation requests go through the Rust/Tauri backend, not directly from the frontend.
+- The backend stores provider settings and page translations under the app config directory.
+- Page cache keys include document, page, source hash, provider, model, language, and prompt version.
 
 ## Install (Homebrew)
 
@@ -46,26 +50,43 @@ bun run build
 
 ## Usage
 
-1. Open a PDF.
-2. Select target language and model.
-3. Hover or click a sentence to highlight corresponding regions in the PDF.
-4. Translations are cached locally for fast repeat access.
+1. Open a PDF or EPUB.
+2. Choose your provider, API credentials, model, and target language in Settings.
+3. For PDFs, read one source page on the left and its translated page on the right.
+4. Move pages with the toolbar or keyboard shortcuts:
+   - `ArrowLeft` / `PageUp`
+   - `ArrowRight` / `PageDown`
+5. Select text on the PDF page to get a quick pop-up translation.
+
+## PDF Notes
+
+- Text-based PDFs and OCR-text PDFs work for page translation and selection.
+- Image-only PDFs without usable text show an OCR-needed fallback message.
+- Cached pages skip the typing animation and appear immediately when reopened.
 
 ## Settings
 
+- Provider presets:
+  - OpenRouter
+  - OpenAI-compatible endpoint
+- Model discovery when supported
+- Manual model input fallback
+- Target language
 - Theme: system / light / dark
-- Translation mode:
-  - Window: current page ± radius
-  - Chunk: translate by page blocks
-- Debounce: 400ms; concurrency: 1; stale responses ignored
 
 ## Project Structure
 
-- `src/components/PdfViewer.tsx`: PDF list and navigation
-- `src/components/PdfPage.tsx`: PDF page rendering and highlights
-- `src/components/TranslationPane.tsx`: Translation UI (Slate read-only)
-- `src/lib/textExtraction.ts`: Sentence extraction
-- `src-tauri/src/lib.rs`: OpenRouter translation command
+- `src/App.tsx`: main app state and reader orchestration
+- `src/components/PdfViewer.tsx`: single-page PDF viewer shell
+- `src/components/PdfPage.tsx`: PDF page rendering and invisible text selection layer
+- `src/components/TranslationPane.tsx`: page translation view and legacy EPUB translation pane
+- `src/components/settings/SettingsDialogContent.tsx`: shared settings UI
+- `src/lib/pageText.ts`: page translation payload helpers
+- `src/lib/pageQueue.ts`: page navigation and prefetch helpers
+- `src/lib/typewriter.ts`: translated text reveal helper
+- `src-tauri/src/lib.rs`: Tauri commands and translation orchestration
+- `src-tauri/src/providers.rs`: provider abstraction helpers
+- `src-tauri/src/page_cache.rs`: page cache helpers
 
 ## Recommended IDE Setup
 
