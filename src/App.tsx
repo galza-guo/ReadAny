@@ -32,11 +32,16 @@ import { HomeView } from "./views/HomeView";
 import {
   createDefaultSettings,
   createPresetDraft,
+  discardUnsavedPresetEdits,
   getActivePreset,
   getDefaultModelForProvider,
   getNextThemeMode,
   getPresetValidationState,
+  isPresetUnchangedFromSavedState,
+  normalizeSettingsFromStorage,
   normalizePresetDraft,
+  serializePresetForCommand,
+  serializeSettingsForCommand,
 } from "./lib/appSettings";
 import { extractPageParagraphs } from "./lib/textExtraction";
 import { hashBuffer } from "./lib/hash";
@@ -138,6 +143,8 @@ export default function App() {
   const [pdfManualScale, setPdfManualScale] = useState<number>(1);
   const [resolvedPdfScale, setResolvedPdfScale] = useState<number>(1);
   const [settings, setSettings] = useState<TranslationSettings>(DEFAULT_SETTINGS);
+  const [savedSettingsSnapshot, setSavedSettingsSnapshot] =
+    useState<TranslationSettings>(DEFAULT_SETTINGS);
   const [hoverPid, setHoverPid] = useState<string | null>(null);
   const [activePid, setActivePid] = useState<string | null>(null);
   const [documentStatusMessage, setDocumentStatusMessage] = useState<string | null>(null);
@@ -152,6 +159,7 @@ export default function App() {
     Record<string, PresetTestResult | undefined>
   >({});
   const [presetSaving, setPresetSaving] = useState<boolean>(false);
+  const [presetTestRunningId, setPresetTestRunningId] = useState<string | null>(null);
   const [presetModelsLoading, setPresetModelsLoading] = useState<boolean>(false);
   const [presetModels, setPresetModels] = useState<Record<string, string[]>>({});
   const [testAllPresetsRunning, setTestAllPresetsRunning] = useState<boolean>(false);
@@ -752,7 +760,9 @@ export default function App() {
   useEffect(() => {
     invoke<TranslationSettings>("get_app_settings")
       .then((loadedSettings) => {
-        setSettings(loadedSettings);
+        const normalizedSettings = normalizeSettingsFromStorage(loadedSettings);
+        setSettings(normalizedSettings);
+        setSavedSettingsSnapshot(normalizedSettings);
       })
       .catch((error) => {
         console.error("Failed to load app settings:", error);
@@ -762,13 +772,14 @@ export default function App() {
   const activePreset = useMemo(() => getActivePreset(settings), [settings]);
 
   const buildPersistableSettings = useCallback(
-    (nextSettings: TranslationSettings) => ({
-      ...nextSettings,
-      presets: nextSettings.presets.map((preset) => {
+    (nextSettings: TranslationSettings) =>
+      serializeSettingsForCommand({
+        ...nextSettings,
+        presets: nextSettings.presets.map((preset) => {
         const draftApiKey = presetApiKeyDrafts[preset.id]?.trim();
         return draftApiKey ? { ...preset, apiKey: draftApiKey } : preset;
+        }),
       }),
-    }),
     [presetApiKeyDrafts]
   );
 
@@ -788,11 +799,13 @@ export default function App() {
         const saved = (await invoke("save_app_settings", {
           settings: buildPersistableSettings(nextSettings),
         })) as TranslationSettings;
-        setSettings(saved);
+        const normalizedSettings = normalizeSettingsFromStorage(saved);
+        setSettings(normalizedSettings);
+        setSavedSettingsSnapshot(normalizedSettings);
         if (options?.clearDrafts) {
           setPresetApiKeyDrafts({});
         }
-        return saved;
+        return normalizedSettings;
       } catch (error) {
         console.error("Failed to save settings:", error);
         if (activePreset) {
@@ -819,7 +832,9 @@ export default function App() {
   const getPresetDraft = useCallback(
     (preset: TranslationPreset) => {
       const draftApiKey = presetApiKeyDrafts[preset.id]?.trim();
-      return draftApiKey ? { ...preset, apiKey: draftApiKey } : preset;
+      return serializePresetForCommand(
+        draftApiKey ? { ...preset, apiKey: draftApiKey } : preset
+      );
     },
     [presetApiKeyDrafts]
   );
@@ -1354,6 +1369,28 @@ export default function App() {
     });
   }, []);
 
+  const handleDiscardPresetEdits = useCallback((presetId: string) => {
+    setSettings((prev) =>
+      discardUnsavedPresetEdits({
+        settings: prev,
+        savedSettings: savedSettingsSnapshot,
+        presetId,
+      })
+    );
+    setPresetStatuses((prev) => {
+      const { [presetId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setPresetApiKeyDrafts((prev) => {
+      const { [presetId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setPresetModels((prev) => {
+      const { [presetId]: _removed, ...rest } = prev;
+      return rest;
+    });
+  }, [savedSettingsSnapshot]);
+
   const handlePresetChange = useCallback((nextPreset: TranslationPreset) => {
     const currentPreset = settings.presets.find((preset) => preset.id === nextPreset.id);
     const providerChanged =
@@ -1397,22 +1434,10 @@ export default function App() {
   }, [settings.presets]);
 
   const handleSaveSettings = useCallback(async () => {
-    const saved = await persistSettings(settings, {
+    await persistSettings(settings, {
       showSaving: true,
       clearDrafts: true,
     });
-    const savedPreset = getActivePreset(saved);
-    if (savedPreset) {
-      setPresetStatuses((prev) => ({
-        ...prev,
-        [savedPreset.id]: {
-          presetId: savedPreset.id,
-          label: savedPreset.label,
-          ok: true,
-          message: "Saved",
-        },
-      }));
-    }
   }, [persistSettings, settings]);
 
   const handleFetchPresetModels = useCallback(async () => {
@@ -1435,13 +1460,7 @@ export default function App() {
       }));
       setPresetStatuses((prev) => ({
         ...prev,
-        [activePreset.id]: {
-          presetId: activePreset.id,
-          label: activePreset.label,
-          ok: true,
-          message:
-            models.length > 0 ? `Loaded ${models.length} models` : "No models returned",
-        },
+        [activePreset.id]: undefined,
       }));
     } catch (error) {
       console.error("Failed to fetch preset models:", error);
@@ -1462,6 +1481,12 @@ export default function App() {
   const handleTestPreset = useCallback(async () => {
     if (!activePreset) return;
 
+    setPresetTestRunningId(activePreset.id);
+    setPresetStatuses((prev) => ({
+      ...prev,
+      [activePreset.id]: undefined,
+    }));
+
     try {
       const result = (await invoke("test_translation_preset", {
         preset: getPresetDraft(activePreset),
@@ -1481,6 +1506,10 @@ export default function App() {
           message: String(error),
         },
       }));
+    } finally {
+      setPresetTestRunningId((current) =>
+        current === activePreset.id ? null : current
+      );
     }
   }, [activePreset, getPresetDraft]);
 
@@ -1502,6 +1531,47 @@ export default function App() {
       setTestAllPresetsRunning(false);
     }
   }, [getPresetDraft, settings.presets]);
+
+  const activeSavedPreset = useMemo(
+    () =>
+      activePreset
+        ? savedSettingsSnapshot.presets.find((preset) => preset.id === activePreset.id)
+        : undefined,
+    [activePreset, savedSettingsSnapshot.presets]
+  );
+
+  const activePresetIsSaved = useMemo(
+    () =>
+      isPresetUnchangedFromSavedState({
+        preset: activePreset,
+        savedPreset: activeSavedPreset,
+        apiKeyInput: activePreset ? presetApiKeyDrafts[activePreset.id] ?? "" : "",
+      }),
+    [activePreset, activeSavedPreset, presetApiKeyDrafts]
+  );
+
+  const discardAllUnsavedSettings = useCallback(() => {
+    setSettings(savedSettingsSnapshot);
+    setPresetApiKeyDrafts({});
+    setPresetStatuses({});
+    setPresetModels({});
+  }, [savedSettingsSnapshot]);
+
+  const handleSettingsOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        discardAllUnsavedSettings();
+      }
+
+      setSettingsOpen(open);
+    },
+    [discardAllUnsavedSettings]
+  );
+
+  const handleSettingsDone = useCallback(async () => {
+    await handleSaveSettings();
+    setSettingsOpen(false);
+  }, [handleSaveSettings]);
 
   useEffect(() => {
     if (currentFileType !== "pdf") return;
@@ -2629,7 +2699,9 @@ export default function App() {
     activePreset,
     presetApiKeyInput: activePreset ? presetApiKeyDrafts[activePreset.id] ?? "" : "",
     presetStatuses,
+    activePresetIsSaved,
     presetSaving,
+    presetTestRunning: activePreset ? presetTestRunningId === activePreset.id : false,
     presetModelsLoading,
     testAllRunning: testAllPresetsRunning,
     testAllDisabled: hasInvalidPreset,
@@ -2637,6 +2709,7 @@ export default function App() {
     onSettingsChange: setSettings,
     onAddPreset: handleAddPreset,
     onDeletePreset: handleDeletePreset,
+    onDiscardPresetEdits: handleDiscardPresetEdits,
     onPresetSelect: handlePresetSelect,
     onPresetChange: handlePresetChange,
     onPresetApiKeyInputChange: (apiKey: string) => {
@@ -2644,6 +2717,10 @@ export default function App() {
       setPresetApiKeyDrafts((prev) => ({
         ...prev,
         [activePreset.id]: apiKey,
+      }));
+      setPresetStatuses((prev) => ({
+        ...prev,
+        [activePreset.id]: undefined,
       }));
     },
     onSaveSettings: handleSaveSettings,
@@ -2655,8 +2732,8 @@ export default function App() {
   const sharedSettingsDialog = (
     <SettingsDialog
       contentProps={settingsDialogProps}
-      onDone={handleSaveSettings}
-      onOpenChange={setSettingsOpen}
+      onDone={handleSettingsDone}
+      onOpenChange={handleSettingsOpenChange}
       open={settingsOpen}
       saveDisabled={presetSaving || hasInvalidPreset}
     />
