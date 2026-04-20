@@ -41,9 +41,7 @@ export function SettingsDialog({
               className="btn btn-ghost btn-icon-only settings-dialog-done-button"
               disabled={saveDisabled}
               onClick={() => {
-                void Promise.resolve(onDone())
-                  .then(() => onOpenChange(false))
-                  .catch(() => {});
+                void Promise.resolve(onDone()).catch(() => {});
               }}
               title={saveDisabled ? "Saving..." : "Done"}
               type="button"

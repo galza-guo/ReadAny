@@ -40,4 +40,13 @@ describe("settings dialog focus behavior", () => {
     expect(appSource).not.toContain('import * as Dialog from "@radix-ui/react-dialog";');
     expect(appSource).not.toContain("<Dialog.Content");
   });
+
+  test("app discards unsaved settings when the dialog closes without saving", () => {
+    const appSource = readAppSource();
+
+    expect(appSource).toContain("const discardAllUnsavedSettings = useCallback(() => {");
+    expect(appSource).toContain("if (!open) {");
+    expect(appSource).toContain("discardAllUnsavedSettings();");
+    expect(appSource).toContain("const handleSettingsDone = useCallback(async () => {");
+  });
 });

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import * as Label from "@radix-ui/react-label";
 import * as Select from "@radix-ui/react-select";
 import { ConfirmationDialog } from "../ConfirmationDialog";
@@ -23,7 +23,9 @@ export type SettingsDialogContentProps = {
   activePreset?: TranslationPreset;
   presetApiKeyInput: string;
   presetStatuses: Record<string, PresetTestResult | undefined>;
+  activePresetIsSaved?: boolean;
   presetSaving: boolean;
+  presetTestRunning?: boolean;
   presetModelsLoading: boolean;
   testAllRunning: boolean;
   testAllDisabled?: boolean;
@@ -31,6 +33,7 @@ export type SettingsDialogContentProps = {
   onSettingsChange: (settings: TranslationSettings) => void;
   onAddPreset: () => string;
   onDeletePreset: (presetId: string) => void;
+  onDiscardPresetEdits: (presetId: string) => void;
   onPresetSelect: (presetId: string) => void;
   onPresetChange: (preset: TranslationPreset) => void;
   onPresetApiKeyInputChange: (apiKey: string) => void;
@@ -78,12 +81,187 @@ function ChevronDownIcon() {
   );
 }
 
+function CheckCircleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12 2.5 2.5L15.5 10" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m5 13 4 4L19 7" />
+    </svg>
+  );
+}
+
+type ModelComboboxProps = {
+  id: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder: string;
+  value: string;
+};
+
+function ModelCombobox({
+  id,
+  onChange,
+  options,
+  placeholder,
+  value,
+}: ModelComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const filteredOptions = useMemo(() => {
+    const uniqueOptions = Array.from(new Set(options));
+    const query = value.trim().toLowerCase();
+
+    if (!query) {
+      return uniqueOptions;
+    }
+
+    return uniqueOptions.filter((model) => model.toLowerCase().includes(query));
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!open) {
+      optionRefs.current = [];
+      return;
+    }
+
+    setHighlightedIndex(0);
+  }, [open, value]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    optionRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [highlightedIndex, open]);
+
+  const handleSelect = (model: string) => {
+    onChange(model);
+    setOpen(false);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      if (filteredOptions.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      setOpen(true);
+      setHighlightedIndex((current) =>
+        Math.min(current + 1, filteredOptions.length - 1)
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      if (filteredOptions.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      setOpen(true);
+      setHighlightedIndex((current) => Math.max(current - 1, 0));
+      return;
+    }
+
+    if (event.key === "Enter" && open && filteredOptions[highlightedIndex]) {
+      event.preventDefault();
+      handleSelect(filteredOptions[highlightedIndex]);
+    }
+  };
+
+  const showPanel = open && options.length > 0;
+
+  return (
+    <div className={`model-combobox ${showPanel ? "is-open" : ""}`} ref={rootRef}>
+      <input
+        autoComplete="off"
+        className="input model-combobox-input"
+        id={id}
+        onBlur={(event) => {
+          const nextTarget = event.relatedTarget as Node | null;
+          if (!rootRef.current?.contains(nextTarget)) {
+            setOpen(false);
+          }
+        }}
+        onChange={(event) => {
+          onChange(event.target.value);
+          if (options.length > 0) {
+            setOpen(true);
+          }
+        }}
+        onFocus={() => {
+          if (options.length > 0) {
+            setOpen(true);
+          }
+        }}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        type="text"
+        value={value}
+      />
+
+      {showPanel ? (
+        <div className="model-combobox-panel" role="listbox">
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((model, index) => {
+              const isSelected = model === value;
+              const isHighlighted = index === highlightedIndex;
+
+              return (
+                <button
+                  key={model}
+                  ref={(element) => {
+                    optionRefs.current[index] = element;
+                  }}
+                  className={`model-combobox-option ${
+                    isHighlighted ? "is-highlighted" : ""
+                  } ${isSelected ? "is-selected" : ""}`}
+                  onClick={() => handleSelect(model)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedIndex(index)}
+                  role="option"
+                  type="button"
+                >
+                  <span>{model}</span>
+                  {isSelected ? <CheckCircleIcon /> : null}
+                </button>
+              );
+            })
+          ) : (
+            <div className="model-combobox-empty">No matching models.</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SettingsDialogContent({
   settings,
   activePreset,
   presetApiKeyInput,
   presetStatuses,
+  activePresetIsSaved = false,
   presetSaving,
+  presetTestRunning = false,
   presetModelsLoading,
   testAllRunning,
   testAllDisabled = false,
@@ -91,6 +269,7 @@ export function SettingsDialogContent({
   onSettingsChange,
   onAddPreset,
   onDeletePreset,
+  onDiscardPresetEdits,
   onPresetSelect,
   onPresetChange,
   onPresetApiKeyInputChange,
@@ -106,6 +285,9 @@ export function SettingsDialogContent({
   const fetchedModels = activePreset ? presetModels[activePreset.id] ?? [] : [];
   const selectedPresetStatus = activePreset
     ? presetStatuses[activePreset.id]
+    : undefined;
+  const selectedPresetError = selectedPresetStatus && !selectedPresetStatus.ok
+    ? selectedPresetStatus
     : undefined;
   const canFetchModels = activePreset
     ? canListModels({
@@ -133,16 +315,36 @@ export function SettingsDialogContent({
         isEditing: apiKeyEditingPresetId === activePreset.id,
       })
     : undefined;
+  const apiKeySaved = Boolean(activePreset?.apiKeyConfigured && !presetApiKeyInput.trim());
   const modelPlaceholder = activePreset
     ? `e.g. ${getDefaultModelForProvider(activePreset.providerKind)}`
     : "e.g. openai/gpt-4o-mini";
-  const apiKeyStatus = activePreset
-    ? presetApiKeyInput.trim()
-      ? { className: "status-ok", label: "New key ready to save" }
-      : activePreset.apiKeyConfigured
-        ? { className: "status-ok", label: "Saved key on file" }
-        : { className: "status-warn", label: "Required" }
-    : undefined;
+
+  const discardExpandedPreset = (nextExpandedPresetId: string | null = null) => {
+    if (expandedPresetId) {
+      onDiscardPresetEdits(expandedPresetId);
+      setApiKeyEditingPresetId((current) =>
+        current === expandedPresetId ? null : current
+      );
+    }
+
+    setExpandedPresetId(nextExpandedPresetId);
+  };
+
+  const togglePresetEditor = (presetId: string) => {
+    if (expandedPresetId === presetId) {
+      discardExpandedPreset();
+      return;
+    }
+
+    if (expandedPresetId && expandedPresetId !== presetId) {
+      discardExpandedPreset(presetId);
+    } else {
+      setExpandedPresetId(presetId);
+    }
+
+    onPresetSelect(presetId);
+  };
 
   return (
     <>
@@ -233,33 +435,30 @@ export function SettingsDialogContent({
                     <div className="settings-preset-row">
                       <button
                         className="settings-preset-main"
-                        onClick={() => onPresetSelect(preset.id)}
+                        onClick={() => togglePresetEditor(preset.id)}
                         type="button"
                       >
                         <div className="settings-preset-copy">
-                          <span className="settings-preset-label type-pane-title">{preset.label}</span>
+                          <div className="settings-preset-title-row">
+                            <span className="settings-preset-label type-pane-title">{preset.label}</span>
+                            {status?.ok ? (
+                              <span
+                                aria-label="Preset test passed"
+                                className="settings-preset-success"
+                                title="Preset test passed"
+                              >
+                                <CheckCircleIcon />
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                       </button>
                       <div className="settings-preset-actions">
-                        {status ? (
-                          <span
-                            className={`settings-preset-badge ${
-                              status.ok ? "is-ok" : "is-error"
-                            }`}
-                          >
-                            {status.ok ? "OK" : "Issue"}
-                          </span>
-                        ) : null}
                         <button
                           className="btn btn-icon-only btn-quiet-action settings-icon-button"
                           aria-label="Edit preset"
                           title="Edit preset"
-                          onClick={() => {
-                            onPresetSelect(preset.id);
-                            setExpandedPresetId((current) =>
-                              current === preset.id ? null : preset.id
-                            );
-                          }}
+                          onClick={() => togglePresetEditor(preset.id)}
                           type="button"
                         >
                           <PencilIcon />
@@ -350,77 +549,13 @@ export function SettingsDialogContent({
 
                       <div className="settings-item">
                         <div className="settings-inline-row">
-                          <Label.Root className="settings-label type-field-label" htmlFor="preset-model">
-                            Model
+                          <Label.Root className="settings-label type-field-label" htmlFor="preset-api-key">
+                            API key
                           </Label.Root>
-                          <button
-                            className="btn btn-ghost btn-small"
-                            disabled={!canFetchModels || presetModelsLoading}
-                            onClick={onFetchPresetModels}
-                            type="button"
-                          >
-                            {presetModelsLoading ? "Loading..." : "Load models"}
-                          </button>
+                          {apiKeySaved ? (
+                            <span className="settings-field-status status-ok">Saved</span>
+                          ) : null}
                         </div>
-
-                        {fetchedModels.length > 0 ? (
-                          <Select.Root
-                            value={activePreset.model}
-                            onValueChange={(value) =>
-                              onPresetChange({
-                                ...activePreset,
-                                model: value,
-                              })
-                            }
-                          >
-                            <Select.Trigger
-                              className="select-trigger"
-                              aria-label="Preset model"
-                            >
-                              <Select.Value placeholder="Choose a model" />
-                              <Select.Icon asChild>
-                                <ChevronDownIcon />
-                              </Select.Icon>
-                            </Select.Trigger>
-                            <Select.Portal>
-                              <Select.Content
-                                className="select-content settings-select-content"
-                                position="popper"
-                              >
-                                <Select.Viewport>
-                                  {fetchedModels.map((model) => (
-                                    <Select.Item
-                                      key={model}
-                                      value={model}
-                                      className="select-item"
-                                    >
-                                      <Select.ItemText>{model}</Select.ItemText>
-                                    </Select.Item>
-                                  ))}
-                                </Select.Viewport>
-                              </Select.Content>
-                            </Select.Portal>
-                          </Select.Root>
-                        ) : null}
-
-                        <input
-                          id="preset-model"
-                          className="input"
-                          value={activePreset.model}
-                          onChange={(event) =>
-                            onPresetChange({
-                              ...activePreset,
-                              model: event.target.value,
-                            })
-                          }
-                          placeholder={modelPlaceholder}
-                        />
-                      </div>
-
-                      <div className="settings-item">
-                        <Label.Root className="settings-label type-field-label" htmlFor="preset-api-key">
-                          API key
-                        </Label.Root>
                         <input
                           id="preset-api-key"
                           className={apiKeyFieldState?.showsSavedMask ? "input input-masked" : "input"}
@@ -439,45 +574,82 @@ export function SettingsDialogContent({
                           }
                           onFocus={() => setApiKeyEditingPresetId(activePreset.id)}
                         />
-                        {apiKeyStatus ? (
-                          <div className="api-key-status">
-                            <span className={apiKeyStatus.className}>{apiKeyStatus.label}</span>
-                          </div>
-                        ) : null}
+                      </div>
+
+                      <div className="settings-item">
+                        <div className="settings-inline-row">
+                          <Label.Root className="settings-label type-field-label" htmlFor="preset-model">
+                            Model
+                          </Label.Root>
+                          <button
+                            className="btn btn-ghost btn-small"
+                            disabled={!canFetchModels || presetModelsLoading}
+                            onClick={onFetchPresetModels}
+                            type="button"
+                          >
+                            {presetModelsLoading ? "Loading..." : "Load models"}
+                          </button>
+                        </div>
+
+                        <ModelCombobox
+                          id="preset-model"
+                          onChange={(value) =>
+                            onPresetChange({
+                              ...activePreset,
+                              model: value,
+                            })
+                          }
+                          options={fetchedModels}
+                          placeholder={modelPlaceholder}
+                          value={activePreset.model}
+                        />
                       </div>
 
                       <div className="settings-actions-row">
-                        <button
-                          className="btn btn-primary"
-                          disabled={presetSaving || !activePresetValidation?.isValid}
-                          onClick={() => {
-                            setApiKeyEditingPresetId(null);
-                            void Promise.resolve(onSaveSettings());
-                          }}
-                          type="button"
-                        >
-                          {presetSaving ? "Saving..." : "Save"}
-                        </button>
+                        {activePresetIsSaved && !presetSaving ? (
+                          <span className="settings-action-status status-ok">
+                            <CheckIcon />
+                            Saved
+                          </span>
+                        ) : (
+                          <button
+                            className="settings-save-action"
+                            disabled={presetSaving || !activePresetValidation?.isValid}
+                            onClick={() => {
+                              setApiKeyEditingPresetId(null);
+                              void Promise.resolve(onSaveSettings());
+                            }}
+                            type="button"
+                          >
+                            {presetSaving ? "Saving..." : "Save"}
+                          </button>
+                        )}
                         <button
                           className="btn btn-quiet-action"
-                          disabled={!activePresetValidation?.isValid}
+                          disabled={presetTestRunning || !activePresetValidation?.isValid}
                           onClick={onTestPreset}
                           type="button"
                         >
                           Test
                         </button>
+                        {presetTestRunning ? (
+                          <span
+                            aria-label="Testing in progress"
+                            className="settings-action-pending"
+                            title="Testing in progress"
+                          >
+                            <span className="settings-action-ellipsis" aria-hidden="true">
+                              <span />
+                              <span />
+                              <span />
+                            </span>
+                          </span>
+                        ) : null}
                       </div>
 
-                      {selectedPresetStatus ? (
+                      {selectedPresetError ? (
                         <div className="api-key-status">
-                          <span
-                            className={selectedPresetStatus.ok ? "status-ok" : "status-warn"}
-                          >
-                            {selectedPresetStatus.ok ? "OK" : "Issue"}
-                          </span>
-                          <span className="status-message">
-                            {selectedPresetStatus.message}
-                          </span>
+                          <span className="status-message">{selectedPresetError.message}</span>
                         </div>
                       ) : null}
                       </div>
@@ -500,7 +672,7 @@ export function SettingsDialogContent({
               }
 
               if (expandedPresetId === pendingDeletePreset.id) {
-                setExpandedPresetId(null);
+                discardExpandedPreset();
               }
               onDeletePreset(pendingDeletePreset.id);
               setPendingDeletePresetId(null);
