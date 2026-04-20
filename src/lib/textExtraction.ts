@@ -12,6 +12,8 @@ export type GlyphItem = {
   isVertical: boolean;
   columnIndex: number;
   rotation: number;
+  direction?: string;
+  styleVertical?: boolean;
 };
 
 type Line = {
@@ -30,11 +32,13 @@ function normalizeTextItems(page: PDFPageProxy, scale: number): Promise<GlyphIte
   return page.getTextContent().then((content) => {
     const viewport = page.getViewport({ scale });
     const items: GlyphItem[] = [];
+    const styles = content.styles ?? {};
 
     for (const item of content.items as any[]) {
       const text = String(item.str ?? "").trim();
       if (!text) continue;
 
+      const style = styles[item.fontName] ?? null;
       const transform = (window as any).pdfjsLib.Util.transform(viewport.transform, item.transform);
       const a = transform[0];
       const b = transform[1];
@@ -46,12 +50,27 @@ function normalizeTextItems(page: PDFPageProxy, scale: number): Promise<GlyphIte
       const w = item.width * viewport.scale;
       const h = fontHeight;
       const top = y - h;
-      const isVertical = Math.abs(b) + Math.abs(c) > Math.abs(a) + Math.abs(d);
+      const isVertical =
+        style?.vertical === true ||
+        item.dir === "ttb" ||
+        Math.abs(b) + Math.abs(c) > Math.abs(a) + Math.abs(d);
 
       // Calculate rotation angle from transform matrix
       const rotation = Math.atan2(b, a) * (180 / Math.PI);
 
-      items.push({ text, x, y: top, w, h, lineId: -1, isVertical, columnIndex: 0, rotation });
+      items.push({
+        text,
+        x,
+        y: top,
+        w,
+        h,
+        lineId: -1,
+        isVertical,
+        columnIndex: 0,
+        rotation,
+        direction: item.dir,
+        styleVertical: style?.vertical === true,
+      });
     }
 
     return items;
@@ -71,6 +90,10 @@ function isWatermarkText(item: GlyphItem): boolean {
     if (pattern.test(text)) return true;
   }
 
+  if (isLikelyVerticalItem(item)) {
+    return false;
+  }
+
   // Check if text is significantly rotated (watermarks are often diagonal)
   const absRotation = Math.abs(item.rotation);
   if (absRotation > 10 && absRotation < 170) {
@@ -81,7 +104,7 @@ function isWatermarkText(item: GlyphItem): boolean {
   return false;
 }
 
-function filterWatermarks(items: GlyphItem[]): { content: GlyphItem[]; watermarks: GlyphItem[] } {
+export function filterWatermarks(items: GlyphItem[]): { content: GlyphItem[]; watermarks: GlyphItem[] } {
   const content: GlyphItem[] = [];
   const watermarks: GlyphItem[] = [];
 
@@ -230,10 +253,62 @@ function groupItemsByColumn(items: GlyphItem[], numColumns: number): GlyphItem[]
   return columns;
 }
 
+function isLikelyVerticalItem(item: GlyphItem): boolean {
+  return item.styleVertical === true || item.direction === "ttb" || item.isVertical;
+}
+
 function detectWritingMode(items: GlyphItem[]): WritingMode {
   if (items.length === 0) return "horizontal";
-  const verticalCount = items.reduce((sum, item) => sum + (item.isVertical ? 1 : 0), 0);
-  return verticalCount / items.length >= 0.4 ? "vertical" : "horizontal";
+  let verticalScore = 0;
+  let horizontalScore = 0;
+
+  for (const item of items) {
+    if (item.styleVertical === true) {
+      verticalScore += 4;
+    } else if (item.styleVertical === false) {
+      horizontalScore += 2;
+    }
+
+    if (item.direction === "ttb") {
+      verticalScore += 3;
+    } else if (item.direction === "ltr" || item.direction === "rtl") {
+      horizontalScore += 1;
+    }
+
+    if (item.isVertical) {
+      verticalScore += 1;
+    } else {
+      horizontalScore += 0.5;
+    }
+  }
+
+  return verticalScore > horizontalScore ? "vertical" : "horizontal";
+}
+
+function getMedian(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+  return sorted[middle];
+}
+
+function filterVerticalMarginalia(items: GlyphItem[], pageHeight: number): GlyphItem[] {
+  const verticalItems = items.filter(isLikelyVerticalItem);
+  if (verticalItems.length === 0) return items;
+
+  const top = Math.min(...verticalItems.map((item) => item.y));
+  const bottom = Math.max(...verticalItems.map((item) => item.y + item.h));
+  const medianSize = getMedian(verticalItems.map((item) => Math.max(item.w, item.h)));
+  const edgeBand = Math.max(medianSize * 2, pageHeight * 0.03);
+
+  return items.filter((item) => {
+    if (isLikelyVerticalItem(item)) return true;
+    const itemBottom = item.y + item.h;
+    return itemBottom >= top - edgeBand && item.y <= bottom + edgeBand;
+  });
 }
 
 function groupIntoHorizontalLines(items: GlyphItem[]): Line[] {
@@ -262,18 +337,19 @@ function groupIntoHorizontalLines(items: GlyphItem[]): Line[] {
 }
 
 function groupIntoVerticalColumns(items: GlyphItem[]): Line[] {
-  const sorted = [...items].sort((a, b) => a.x - b.x || a.y - b.y);
+  const sorted = [...items].sort((a, b) => b.x - a.x || a.y - b.y);
   const columns: Line[] = [];
+  const threshold = Math.max(6, getMedian(items.map((item) => Math.max(item.w, item.h))) * 0.5);
 
   for (const item of sorted) {
-    const threshold = Math.max(2, item.w * 0.6);
-    let column = columns.find((candidate) => Math.abs(candidate.y - item.x) <= threshold);
+    const anchor = item.x + item.w / 2;
+    let column = columns.find((candidate) => Math.abs(candidate.y - anchor) <= threshold);
     if (!column) {
-      column = { id: columns.length, y: item.x, items: [] };
+      column = { id: columns.length, y: anchor, items: [] };
       columns.push(column);
     }
     column.items.push(item);
-    column.y = (column.y * (column.items.length - 1) + item.x) / column.items.length;
+    column.y = (column.y * (column.items.length - 1) + anchor) / column.items.length;
   }
 
   for (const column of columns) {
@@ -483,32 +559,30 @@ export type PageExtractionResult = {
   watermarks: string[];
 };
 
-export async function extractPageParagraphs(
-  page: PDFPageProxy,
-  docId: string,
-  pageIndex: number
-): Promise<PageExtractionResult> {
-  const viewport = page.getViewport({ scale: 1 });
-  const pageWidth = viewport.width;
+type GlyphExtractionOptions = {
+  docId: string;
+  pageIndex: number;
+  pageWidth: number;
+  pageHeight: number;
+};
 
-  const allGlyphs = await normalizeTextItems(page, 1);
-
-  // Filter out watermarks
-  const { content: glyphs, watermarks: watermarkItems } = filterWatermarks(allGlyphs);
-  const watermarks = watermarkItems.map((item) => item.text);
-
+export function extractParagraphsFromGlyphs(
+  glyphs: GlyphItem[],
+  { docId, pageIndex, pageWidth, pageHeight }: GlyphExtractionOptions
+): Paragraph[] {
   const mode = detectWritingMode(glyphs);
+  const sourceGlyphs = mode === "vertical" ? filterVerticalMarginalia(glyphs, pageHeight) : glyphs;
   const paragraphs: Paragraph[] = [];
 
   // For horizontal text, detect and handle multi-column layout
   if (mode === "horizontal") {
-    const columnBoundaries = detectColumnBoundaries(glyphs, pageWidth);
+    const columnBoundaries = detectColumnBoundaries(sourceGlyphs, pageWidth);
     const numColumns = columnBoundaries.length - 1;
 
     if (numColumns > 1) {
       // Multi-column layout detected
-      assignColumnsToItems(glyphs, columnBoundaries);
-      const columnGroups = groupItemsByColumn(glyphs, numColumns);
+      assignColumnsToItems(sourceGlyphs, columnBoundaries);
+      const columnGroups = groupItemsByColumn(sourceGlyphs, numColumns);
 
       // Process each column separately, left to right
       for (const columnItems of columnGroups) {
@@ -533,12 +607,13 @@ export async function extractPageParagraphs(
         }
       }
 
-      return { paragraphs, watermarks };
+      return paragraphs;
     }
   }
 
   // Single column or vertical layout
-  const lines = mode === "vertical" ? groupIntoVerticalColumns(glyphs) : groupIntoHorizontalLines(glyphs);
+  const lines =
+    mode === "vertical" ? groupIntoVerticalColumns(sourceGlyphs) : groupIntoHorizontalLines(sourceGlyphs);
   const internalParagraphs = mode === "vertical" ? groupIntoParagraphsVertical(lines) : groupIntoParagraphsHorizontal(lines);
 
   for (const para of internalParagraphs) {
@@ -555,6 +630,30 @@ export async function extractPageParagraphs(
       rects: buildParagraphRects(pageIndex + 1, items),
     });
   }
+
+  return paragraphs;
+}
+
+export async function extractPageParagraphs(
+  page: PDFPageProxy,
+  docId: string,
+  pageIndex: number
+): Promise<PageExtractionResult> {
+  const viewport = page.getViewport({ scale: 1 });
+  const pageWidth = viewport.width;
+  const pageHeight = viewport.height;
+
+  const allGlyphs = await normalizeTextItems(page, 1);
+
+  // Filter out watermarks
+  const { content: glyphs, watermarks: watermarkItems } = filterWatermarks(allGlyphs);
+  const watermarks = watermarkItems.map((item) => item.text);
+  const paragraphs = extractParagraphsFromGlyphs(glyphs, {
+    docId,
+    pageIndex,
+    pageWidth,
+    pageHeight,
+  });
 
   return { paragraphs, watermarks };
 }
