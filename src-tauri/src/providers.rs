@@ -193,6 +193,9 @@ impl ProviderConfig {
                 Ok(())
             }
             ProviderKind::OpenAiCompatible => {
+                if self.authorization_token().is_none() {
+                    return Err(format!("{} API key is missing.", self.label));
+                }
                 self.required_base_url()?;
                 Ok(())
             }
@@ -346,7 +349,7 @@ pub async fn list_models(provider: &ProviderConfig) -> Result<Vec<String>, Strin
 
 #[cfg(test)]
 mod tests {
-    use super::ProviderConfig;
+    use super::{ProviderConfig, ProviderKind};
 
     #[test]
     fn openrouter_uses_fixed_models_endpoint() {
@@ -354,6 +357,25 @@ mod tests {
         assert_eq!(
             provider.models_url().unwrap(),
             "https://openrouter.ai/api/v1/models"
+        );
+    }
+
+    #[test]
+    fn openai_compatible_requires_an_api_key_for_requests() {
+        let provider = ProviderConfig {
+            id: "custom".to_string(),
+            label: "Custom".to_string(),
+            kind: ProviderKind::OpenAiCompatible,
+            base_url: Some("https://api.example.com/v1".to_string()),
+            api_key: None,
+            api_key_configured: false,
+            default_model: Some("model".to_string()),
+        }
+        .normalized();
+
+        assert_eq!(
+            provider.validate_for_request().unwrap_err(),
+            "Custom API key is missing."
         );
     }
 }

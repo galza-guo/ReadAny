@@ -1,7 +1,6 @@
 use crate::providers::{ProviderConfig, ProviderKind, TranslationProviders};
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_PRESET_ID: &str = "openrouter-default";
 const DEFAULT_MODEL: &str = "openai/gpt-4o-mini";
 const DEFAULT_LANGUAGE_CODE: &str = "zh-CN";
 const DEFAULT_LANGUAGE_LABEL: &str = "Chinese (Simplified)";
@@ -59,22 +58,9 @@ impl Default for SettingsLanguage {
 }
 
 impl TranslationPreset {
-    pub fn default_openrouter(api_key: Option<String>) -> Self {
-        Self {
-            id: DEFAULT_PRESET_ID.to_string(),
-            label: String::new(),
-            provider_kind: ProviderKind::OpenRouter,
-            base_url: None,
-            api_key,
-            api_key_configured: false,
-            model: DEFAULT_MODEL.to_string(),
-        }
-    }
-
     pub fn normalized(&self) -> Self {
         let provider_kind = self.provider_kind.clone();
-        let model =
-            normalize_required_string(Some(&self.model)).unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let model = normalize_required_string(Some(&self.model)).unwrap_or_default();
         let base_url = normalize_base_url(self.base_url.as_deref(), &provider_kind);
         let api_key = normalize_optional_string(self.api_key.as_deref());
         let label = build_preset_label(&provider_kind, &model);
@@ -112,8 +98,8 @@ impl Default for AppSettings {
         Self {
             theme: AppTheme::System,
             default_language: SettingsLanguage::default(),
-            active_preset_id: DEFAULT_PRESET_ID.to_string(),
-            presets: vec![TranslationPreset::default_openrouter(None).normalized()],
+            active_preset_id: String::new(),
+            presets: vec![],
         }
     }
 }
@@ -123,16 +109,15 @@ impl AppSettings {
         let mut normalized = self.clone();
         normalized.default_language = normalize_language(Some(&self.default_language));
         normalized.presets = normalize_presets(&self.presets);
+        normalized.presets.retain(|preset| !is_seeded_legacy_placeholder_preset(preset));
 
-        if normalized.presets.is_empty() {
-            normalized.presets = vec![TranslationPreset::default_openrouter(None).normalized()];
-        }
-
-        let active_exists = normalized
+        normalized.active_preset_id = if normalized.presets.is_empty() {
+            String::new()
+        } else if normalized
             .presets
             .iter()
-            .any(|preset| preset.id == self.active_preset_id);
-        normalized.active_preset_id = if active_exists {
+            .any(|preset| preset.id == self.active_preset_id)
+        {
             self.active_preset_id.trim().to_string()
         } else {
             normalized.presets[0].id.clone()
@@ -169,6 +154,9 @@ impl AppSettings {
     }
 
     pub fn active_preset(&self) -> Result<TranslationPreset, String> {
+        if self.presets.is_empty() {
+            return Err("No preset configured.".to_string());
+        }
         self.preset(&self.active_preset_id)
     }
 }
@@ -232,15 +220,12 @@ pub fn migrate_legacy_translation_providers(
         presets.push(preset);
     }
 
-    if presets.is_empty() {
-        presets.push(TranslationPreset::default_openrouter(None).normalized());
-    }
-
     let active_preset_id = presets
         .iter()
         .find(|preset| matches_legacy_active_provider(preset, &legacy.active_provider_id))
         .map(|preset| preset.id.clone())
-        .unwrap_or_else(|| presets[0].id.clone());
+        .or_else(|| presets.first().map(|preset| preset.id.clone()))
+        .unwrap_or_default();
 
     AppSettings {
         theme: theme.unwrap_or_default(),
@@ -340,8 +325,10 @@ fn build_preset_id_seed(provider_kind: &ProviderKind, model: &str) -> String {
         ProviderKind::OpenAiCompatible => "openai-compatible",
     };
 
-    let model_seed = normalize_required_string(Some(model)).unwrap_or_else(|| DEFAULT_MODEL.to_string());
-    format!("{}-{}", provider_seed, model_seed)
+    match normalize_required_string(Some(model)) {
+        Some(model_seed) => format!("{}-{}", provider_seed, model_seed),
+        None => provider_seed.to_string(),
+    }
 }
 
 fn slugify(value: &str) -> String {
@@ -398,11 +385,32 @@ fn matches_legacy_active_provider(preset: &TranslationPreset, legacy_active_prov
     }
 }
 
+fn expected_default_model(provider_kind: &ProviderKind) -> &'static str {
+    match provider_kind {
+        ProviderKind::OpenRouter => DEFAULT_MODEL,
+        ProviderKind::DeepSeek => "deepseek-chat",
+        ProviderKind::OpenAiCompatible => "gpt-4o-mini",
+    }
+}
+
+fn is_seeded_legacy_placeholder_preset(preset: &TranslationPreset) -> bool {
+    let expected_model = expected_default_model(&preset.provider_kind);
+    let expected_id = slugify(&build_preset_id_seed(&preset.provider_kind, expected_model));
+    let expected_base_url = match preset.provider_kind {
+        ProviderKind::DeepSeek => Some(DEEPSEEK_BASE_URL.to_string()),
+        ProviderKind::OpenRouter | ProviderKind::OpenAiCompatible => None,
+    };
+
+    preset.id == expected_id
+        && preset.model.trim() == expected_model
+        && normalize_base_url(preset.base_url.as_deref(), &preset.provider_kind) == expected_base_url
+        && normalize_optional_string(preset.api_key.as_deref()).is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        migrate_legacy_translation_providers, AppSettings, AppTheme, SettingsLanguage,
-        TranslationPreset,
+        migrate_legacy_translation_providers, AppSettings, AppTheme, SettingsLanguage, TranslationPreset,
     };
     use crate::providers::{ProviderConfig, ProviderKind, TranslationProviders};
 
@@ -418,8 +426,8 @@ mod tests {
                 label: "Chinese (Simplified)".to_string(),
             }
         );
-        assert_eq!(settings.active_preset_id, "openrouter-default");
-        assert_eq!(settings.presets.len(), 1);
+        assert_eq!(settings.active_preset_id, "");
+        assert!(settings.presets.is_empty());
     }
 
     #[test]
@@ -498,5 +506,117 @@ mod tests {
         assert_eq!(normalized.presets[0].label, "OpenRouter · openai/gpt-4o-mini");
         assert_eq!(normalized.presets[0].api_key.as_deref(), Some("sk-or-test"));
         assert!(normalized.presets[0].api_key_configured);
+    }
+
+    #[test]
+    fn normalization_keeps_empty_preset_state() {
+        let settings = AppSettings {
+            theme: AppTheme::System,
+            default_language: SettingsLanguage {
+                code: "zh-CN".to_string(),
+                label: "Chinese (Simplified)".to_string(),
+            },
+            active_preset_id: "".to_string(),
+            presets: vec![],
+        };
+
+        let normalized = settings.normalized();
+
+        assert_eq!(normalized.active_preset_id, "");
+        assert!(normalized.presets.is_empty());
+    }
+
+    #[test]
+    fn migration_with_no_legacy_providers_stays_empty() {
+        let legacy = TranslationProviders {
+            active_provider_id: "".to_string(),
+            providers: vec![],
+        };
+
+        let settings = migrate_legacy_translation_providers(legacy, None, None);
+
+        assert_eq!(settings.active_preset_id, "");
+        assert!(settings.presets.is_empty());
+    }
+
+    #[test]
+    fn migration_drops_seeded_legacy_placeholder_providers() {
+        let settings = migrate_legacy_translation_providers(
+            TranslationProviders::default_with_openrouter_key(None),
+            None,
+            None,
+        );
+
+        assert_eq!(settings.active_preset_id, "");
+        assert!(settings.presets.is_empty());
+    }
+
+    #[test]
+    fn normalization_drops_seeded_legacy_placeholder_presets_from_saved_settings() {
+        let settings = AppSettings {
+            theme: AppTheme::System,
+            default_language: SettingsLanguage::default(),
+            active_preset_id: "openrouter-openai-gpt-4o-mini".to_string(),
+            presets: vec![
+                TranslationPreset {
+                    id: "openrouter-openai-gpt-4o-mini".to_string(),
+                    label: "OpenRouter · openai/gpt-4o-mini".to_string(),
+                    provider_kind: ProviderKind::OpenRouter,
+                    base_url: None,
+                    api_key: None,
+                    api_key_configured: false,
+                    model: "openai/gpt-4o-mini".to_string(),
+                },
+                TranslationPreset {
+                    id: "deepseek-deepseek-chat".to_string(),
+                    label: "DeepSeek · deepseek-chat".to_string(),
+                    provider_kind: ProviderKind::DeepSeek,
+                    base_url: Some("https://api.deepseek.com".to_string()),
+                    api_key: None,
+                    api_key_configured: false,
+                    model: "deepseek-chat".to_string(),
+                },
+                TranslationPreset {
+                    id: "openai-compatible-gpt-4o-mini".to_string(),
+                    label: "Custom · gpt-4o-mini".to_string(),
+                    provider_kind: ProviderKind::OpenAiCompatible,
+                    base_url: None,
+                    api_key: None,
+                    api_key_configured: false,
+                    model: "gpt-4o-mini".to_string(),
+                },
+            ],
+        };
+
+        let normalized = settings.normalized();
+
+        assert_eq!(normalized.active_preset_id, "");
+        assert!(normalized.presets.is_empty());
+    }
+
+    #[test]
+    fn normalization_keeps_user_created_blank_preset_drafts() {
+        let settings = AppSettings {
+            theme: AppTheme::System,
+            default_language: SettingsLanguage::default(),
+            active_preset_id: "preset-123".to_string(),
+            presets: vec![TranslationPreset {
+                id: "preset-123".to_string(),
+                label: "Custom".to_string(),
+                provider_kind: ProviderKind::OpenAiCompatible,
+                base_url: None,
+                api_key: None,
+                api_key_configured: false,
+                model: "".to_string(),
+            }],
+        };
+
+        let normalized = settings.normalized();
+
+        assert_eq!(normalized.active_preset_id, "preset-123");
+        assert_eq!(normalized.presets.len(), 1);
+        assert_eq!(normalized.presets[0].id, "preset-123");
+        assert_eq!(normalized.presets[0].model, "");
+        assert_eq!(normalized.presets[0].label, "Custom");
     }
 }

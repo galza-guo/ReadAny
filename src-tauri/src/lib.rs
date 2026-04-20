@@ -305,6 +305,11 @@ fn load_app_settings(handle: &tauri::AppHandle) -> Result<AppSettings, String> {
         return Ok(settings.normalized());
     }
 
+    let legacy_path = provider_settings_file_path(handle)?;
+    if !legacy_path.exists() {
+        return Ok(AppSettings::default());
+    }
+
     let legacy = load_translation_providers(handle)?;
     Ok(migrate_legacy_translation_providers(legacy, None, None))
 }
@@ -341,6 +346,32 @@ fn resolve_preset(
         Some(id) => settings.preset(id),
         None => settings.active_preset(),
     }
+}
+
+fn merge_saved_preset_credentials(
+    saved_presets: &[TranslationPreset],
+    mut incoming: TranslationPreset,
+) -> TranslationPreset {
+    if let Some(saved) = saved_presets.iter().find(|preset| preset.id == incoming.id) {
+        let incoming_key_missing = incoming
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty();
+
+        if incoming_key_missing {
+            incoming.api_key = saved.api_key.clone();
+            incoming.api_key_configured = saved
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some();
+        }
+    }
+
+    incoming
 }
 
 fn merge_translation_providers(
@@ -441,6 +472,14 @@ struct PresetTestResult {
 
 async fn run_preset_test(preset: TranslationPreset) -> PresetTestResult {
     let normalized = preset.normalized();
+    if normalized.model.trim().is_empty() {
+        return PresetTestResult {
+            preset_id: normalized.id,
+            label: normalized.label,
+            ok: false,
+            message: "Model is required.".to_string(),
+        };
+    }
     let provider = normalized.to_provider_config();
     let result = request_chat_completion(
         &provider,
@@ -531,17 +570,25 @@ async fn test_openrouter_key(handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-async fn test_translation_preset(preset: TranslationPreset) -> Result<PresetTestResult, String> {
-    Ok(run_preset_test(preset).await)
+async fn test_translation_preset(
+    handle: tauri::AppHandle,
+    preset: TranslationPreset,
+) -> Result<PresetTestResult, String> {
+    let saved_settings = load_app_settings(&handle)?;
+    let merged = merge_saved_preset_credentials(&saved_settings.presets, preset);
+    Ok(run_preset_test(merged).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 async fn test_all_translation_presets(
+    handle: tauri::AppHandle,
     presets: Vec<TranslationPreset>,
 ) -> Result<Vec<PresetTestResult>, String> {
+    let saved_settings = load_app_settings(&handle)?;
     let mut results = Vec::with_capacity(presets.len());
     for preset in presets {
-        results.push(run_preset_test(preset).await);
+        let merged = merge_saved_preset_credentials(&saved_settings.presets, preset);
+        results.push(run_preset_test(merged).await);
     }
     Ok(results)
 }
@@ -571,8 +618,13 @@ async fn list_provider_models(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-async fn list_preset_models(preset: TranslationPreset) -> Result<Vec<String>, String> {
-    let provider = preset.normalized().to_provider_config();
+async fn list_preset_models(
+    handle: tauri::AppHandle,
+    preset: TranslationPreset,
+) -> Result<Vec<String>, String> {
+    let saved_settings = load_app_settings(&handle)?;
+    let merged = merge_saved_preset_credentials(&saved_settings.presets, preset);
+    let provider = merged.normalized().to_provider_config();
     list_models(&provider).await
 }
 
@@ -592,6 +644,9 @@ async fn translate_page_text(
     let trimmed_display = display_text.trim();
     if trimmed_display.is_empty() {
         return Err("Page text is empty.".to_string());
+    }
+    if model.trim().is_empty() {
+        return Err("Model is required.".to_string());
     }
 
     let preset = resolve_preset(&handle, Some(&preset_id))?;
@@ -795,16 +850,35 @@ fn build_word_lookup_system_prompt() -> String {
     .join(" ")
 }
 
+fn target_language_prompt_text(target_language: &TargetLanguage) -> String {
+    let label = target_language.label.trim();
+    let code = target_language.code.trim();
+
+    if label.is_empty() {
+        return code.to_string();
+    }
+
+    if code.is_empty() || code.starts_with("custom:") || code.eq_ignore_ascii_case(label) {
+        return label.to_string();
+    }
+
+    format!("{} ({})", label, code)
+}
+
 fn build_word_lookup_prompt(word: &str, target_language: &TargetLanguage) -> String {
+    let target = target_language_prompt_text(target_language);
+    let label = target_language.label.trim();
+    let meaning_language = if label.is_empty() { target.as_str() } else { label };
+
     format!(
-        r#"Look up the word "{}" and provide its definition in {} ({}).
+        r#"Look up the word "{}" and provide its definition in {}.
 Return JSON in this exact format:
 {{"phonetic": "/phonetic transcription/", "definitions": [{{"pos": "n.", "meanings": "meaning1; meaning2"}}, {{"pos": "v.", "meanings": "meaning1; meaning2"}}]}}
 - phonetic: IPA pronunciation
 - definitions: array of objects with pos (part of speech like n., v., adj., adv., etc.) and meanings (translations separated by semicolons)
 - Only include parts of speech that apply to this word
 - Meanings should be in {}"#,
-        word, target_language.label, target_language.code, target_language.label
+        word, target, meaning_language
     )
 }
 
@@ -822,9 +896,10 @@ struct WordDefinitionResult {
 
 fn build_user_prompt(target_language: &TargetLanguage, sentences: &[TranslateSentence]) -> String {
     let payload = serde_json::to_string(sentences).unwrap_or_else(|_| "[]".to_string());
+    let target = target_language_prompt_text(target_language);
     format!(
-        "Target language: {} ({})\nTranslation style: faithful, clear, readable\nInput JSON: {}",
-        target_language.label, target_language.code, payload
+        "Target language: {}\nTranslation style: faithful, clear, readable\nInput JSON: {}",
+        target, payload
     )
 }
 
@@ -845,6 +920,7 @@ fn build_page_translation_prompt(
     previous_context: &str,
     next_context: &str,
 ) -> String {
+    let target = target_language_prompt_text(target_language);
     let previous = if previous_context.is_empty() {
         "(none)"
     } else {
@@ -857,9 +933,8 @@ fn build_page_translation_prompt(
     };
 
     format!(
-        "Target language: {} ({})\nRules:\n- Translate ONLY the main page text.\n- Use previous and next context only to resolve page-break spillover.\n- Prefer readable prose over literal phrasing.\n- Ignore OCR noise when possible.\n- Return plain text only.\n\nPrevious page context:\n{}\n\nMain page text:\n{}\n\nNext page context:\n{}",
-        target_language.label,
-        target_language.code,
+        "Target language: {}\nRules:\n- Translate ONLY the main page text.\n- Use previous and next context only to resolve page-break spillover.\n- Prefer readable prose over literal phrasing.\n- Ignore OCR noise when possible.\n- Return plain text only.\n\nPrevious page context:\n{}\n\nMain page text:\n{}\n\nNext page context:\n{}",
+        target,
         previous,
         display_text,
         next
@@ -871,9 +946,10 @@ fn build_selection_translation_system_prompt() -> &'static str {
 }
 
 fn build_selection_translation_prompt(target_language: &TargetLanguage, text: &str) -> String {
+    let target = target_language_prompt_text(target_language);
     format!(
-        "Target language: {} ({})\nSelected text:\n{}",
-        target_language.label, target_language.code, text
+        "Target language: {}\nSelected text:\n{}",
+        target, text
     )
 }
 
@@ -1451,4 +1527,52 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_selection_translation_prompt, merge_saved_preset_credentials, TargetLanguage};
+    use crate::app_settings::TranslationPreset;
+    use crate::providers::ProviderKind;
+
+    #[test]
+    fn custom_language_prompt_prefers_the_custom_label() {
+        let prompt = build_selection_translation_prompt(
+            &TargetLanguage {
+                label: "Hong Kong Traditional Chinese".to_string(),
+                code: "custom:hong-kong-traditional-chinese".to_string(),
+            },
+            "hello",
+        );
+
+        assert!(prompt.contains("Hong Kong Traditional Chinese"));
+        assert!(!prompt.contains("custom:hong-kong-traditional-chinese"));
+    }
+
+    #[test]
+    fn merges_saved_api_key_back_into_sanitized_preset_for_testing() {
+        let saved = TranslationPreset {
+            id: "preset-1".to_string(),
+            label: "OpenRouter".to_string(),
+            provider_kind: ProviderKind::OpenRouter,
+            base_url: None,
+            api_key: Some("sk-saved".to_string()),
+            api_key_configured: true,
+            model: "openai/gpt-4o-mini".to_string(),
+        };
+        let incoming = TranslationPreset {
+            id: "preset-1".to_string(),
+            label: "OpenRouter".to_string(),
+            provider_kind: ProviderKind::OpenRouter,
+            base_url: None,
+            api_key: None,
+            api_key_configured: true,
+            model: "openai/gpt-4o-mini".to_string(),
+        };
+
+        let merged = merge_saved_preset_credentials(&[saved], incoming);
+
+        assert_eq!(merged.api_key.as_deref(), Some("sk-saved"));
+        assert!(merged.api_key_configured);
+    }
 }
