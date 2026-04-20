@@ -1,7 +1,6 @@
-import { useEffect, useRef } from "react";
-import { TextLayerBuilder } from "pdfjs-dist/web/pdf_viewer.mjs";
+import { useCallback, useEffect, useRef } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import type { Paragraph } from "../types";
+import { normalizeSelectionText } from "../lib/pageText";
 
 const TEXT_LAYER_CLASS = "pdf-text-layer";
 
@@ -11,8 +10,8 @@ type PdfPageProps = {
   scale: number;
   baseWidth: number;
   baseHeight: number;
-  paragraphs: Paragraph[];
-  highlightPid?: string | null;
+  onSelectionText: (selection: { text: string; position: { x: number; y: number } }) => void;
+  onClearSelection: () => void;
 };
 
 export function PdfPage({
@@ -21,8 +20,8 @@ export function PdfPage({
   scale,
   baseWidth,
   baseHeight,
-  paragraphs,
-  highlightPid,
+  onSelectionText,
+  onClearSelection,
 }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
@@ -49,6 +48,7 @@ export function PdfPage({
       }
 
       if (textLayerRef.current) {
+        const { TextLayerBuilder } = await import("pdfjs-dist/web/pdf_viewer.mjs");
         const container = textLayerRef.current;
         container.innerHTML = "";
         container.classList.add(TEXT_LAYER_CLASS);
@@ -67,31 +67,43 @@ export function PdfPage({
     };
   }, [pdfDoc, pageNumber, scale]);
 
-  const highlightRects = highlightPid
-    ? paragraphs.filter((p) => p.pid === highlightPid).flatMap((p) => p.rects)
-    : [];
+  const handleMouseUp = useCallback(() => {
+    const selection = window.getSelection();
+    const text = normalizeSelectionText(selection?.toString() ?? "");
+
+    if (!selection || selection.rangeCount === 0 || !text) {
+      onClearSelection();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!textLayerRef.current?.contains(range.commonAncestorContainer)) {
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      onClearSelection();
+      return;
+    }
+
+    onSelectionText({
+      text,
+      position: {
+        x: rect.left + rect.width / 2,
+        y: rect.bottom + 8,
+      },
+    });
+  }, [onClearSelection, onSelectionText]);
 
   return (
     <div
       className="pdf-page"
       style={{ width: baseWidth * scale, height: baseHeight * scale }}
+      onMouseUp={handleMouseUp}
     >
       <canvas ref={canvasRef} className="pdf-canvas" />
       <div ref={textLayerRef} className="pdf-text-layer" />
-      <div className="pdf-overlay">
-        {highlightRects.map((rect, index) => (
-          <div
-            key={`${rect.page}-${rect.x}-${rect.y}-${index}`}
-            className="pdf-highlight"
-            style={{
-              left: rect.x * scale,
-              top: rect.y * scale,
-              width: rect.w * scale,
-              height: rect.h * scale,
-            }}
-          />
-        ))}
-      </div>
     </div>
   );
 }

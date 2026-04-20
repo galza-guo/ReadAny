@@ -1,11 +1,32 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
 import type { VirtuosoHandle } from "react-virtuoso";
 import * as Popover from "@radix-ui/react-popover";
-import type { PageDoc, Paragraph, WordTranslation } from "../types";
+import { getNextRevealText } from "../lib/typewriter";
+import type {
+  PageDoc,
+  PageTranslationState,
+  Paragraph,
+  SelectionTranslation,
+  WordTranslation,
+} from "../types";
 
-type TranslationPaneProps = {
+type PdfTranslationPaneProps = {
+  mode: "pdf";
+  currentPage: number;
+  pageTranslation?: PageTranslationState;
+  onRetryPage: (page: number) => void;
+  canRetryPage: boolean;
+  onOpenVocabulary: () => void;
+  selectionTranslation: SelectionTranslation | null;
+  onClearSelectionTranslation: () => void;
+};
+
+type EpubTranslationPaneProps = {
+  mode: "epub";
   pages: PageDoc[];
+  currentPage: number;
+  onOpenVocabulary: () => void;
   activePid?: string | null;
   hoverPid?: string | null;
   onHoverPid: (pid: string | null) => void;
@@ -18,9 +39,20 @@ type TranslationPaneProps = {
   scrollToPage?: number | null;
 };
 
+type TranslationPaneProps = PdfTranslationPaneProps | EpubTranslationPaneProps;
+
 function TranslateIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M5 8l6 6" />
       <path d="M4 14l6-6 2-3" />
       <path d="M2 5h12" />
@@ -33,7 +65,16 @@ function TranslateIcon() {
 
 function LocateIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="12" cy="12" r="3" />
       <path d="M12 2v4" />
       <path d="M12 18v4" />
@@ -45,7 +86,16 @@ function LocateIcon() {
 
 function RetryIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M21 2v6h-6" />
       <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
       <path d="M3 22v-6h6" />
@@ -54,15 +104,42 @@ function RetryIcon() {
   );
 }
 
+function VocabularyIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      <path d="M8 7h8M8 11h8M8 15h5" />
+    </svg>
+  );
+}
+
 function HeartIcon({ filled }: { filled?: boolean }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
     </svg>
   );
 }
 
-// Memoized paragraph component
 const ParagraphBlock = memo(function ParagraphBlock({
   para,
   pageNum,
@@ -80,55 +157,14 @@ const ParagraphBlock = memo(function ParagraphBlock({
   onLocatePid: (pid: string, page: number) => void;
   onTranslateText: (text: string, position: { x: number; y: number }) => void;
 }) {
-  const handleTextInteraction = useCallback(
-    (e: React.MouseEvent) => {
-      const selection = window.getSelection();
-      if (selection && selection.toString().trim().length > 0) {
-        return;
-      }
-
-      const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-      if (!range) return;
-
-      const node = range.startContainer;
-      if (node.nodeType !== Node.TEXT_NODE) return;
-
-      const text = node.textContent || "";
-      const offset = range.startOffset;
-
-      const charAtOffset = text[offset] || "";
-      if (!/[a-zA-Z]/.test(charAtOffset)) {
-        return;
-      }
-
-      let start = offset;
-      let end = offset;
-
-      while (start > 0 && /[a-zA-Z]/.test(text[start - 1])) {
-        start--;
-      }
-      while (end < text.length && /[a-zA-Z]/.test(text[end])) {
-        end++;
-      }
-
-      const word = text.slice(start, end).trim();
-
-      if (word && /^[a-zA-Z]+$/.test(word) && word.length > 1) {
-        e.stopPropagation();
-        onTranslateText(word, { x: e.clientX, y: e.clientY });
-      }
-    },
-    [onTranslateText]
-  );
-
   const handleMouseUp = useCallback(
-    (e: React.MouseEvent) => {
+    (event: React.MouseEvent) => {
       const selection = window.getSelection();
       const selectedText = selection?.toString().trim();
 
       if (selectedText && selectedText.length > 0 && selectedText.length < 200) {
-        e.stopPropagation();
-        onTranslateText(selectedText, { x: e.clientX, y: e.clientY });
+        event.stopPropagation();
+        onTranslateText(selectedText, { x: event.clientX, y: event.clientY });
       }
     },
     [onTranslateText]
@@ -138,8 +174,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
     para.status === "loading"
       ? "Translating..."
       : para.status === "error"
-      ? "Translation failed."
-      : para.translation || "";
+        ? "Translation failed."
+        : para.translation || "";
 
   return (
     <div
@@ -150,8 +186,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
       <div className="paragraph-actions">
         <button
           className="action-btn locate-btn"
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={(event) => {
+            event.stopPropagation();
             onLocatePid(para.pid, pageNum);
           }}
           title="Locate in document"
@@ -160,8 +196,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
         </button>
         <button
           className="action-btn translate-btn"
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={(event) => {
+            event.stopPropagation();
             onTranslatePid(para.pid);
           }}
           title="Translate paragraph"
@@ -169,11 +205,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
           <TranslateIcon />
         </button>
       </div>
-      <div
-        className="paragraph-source"
-        onClick={handleTextInteraction}
-        onMouseUp={handleMouseUp}
-      >
+      <div className="paragraph-source" onMouseUp={handleMouseUp}>
         {para.source}
       </div>
       {para.status === "error" ? (
@@ -181,8 +213,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
           <span>Translation failed.</span>
           <button
             className="retry-btn"
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={(event) => {
+              event.stopPropagation();
               onTranslatePid(para.pid);
             }}
             title="Retry translation"
@@ -198,8 +230,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
   );
 });
 
-// Memoized page component
-const PageTranslation = memo(function PageTranslation({
+const EpubPageTranslation = memo(function EpubPageTranslation({
   page,
   activePid,
   hoverPid,
@@ -216,7 +247,6 @@ const PageTranslation = memo(function PageTranslation({
   onLocatePid: (pid: string, page: number) => void;
   onTranslateText: (text: string, position: { x: number; y: number }) => void;
 }) {
-  // Use page title if available (for EPUB chapters), otherwise show page number
   const pageTitle = page.title || `Page ${page.page}`;
 
   return (
@@ -238,8 +268,144 @@ const PageTranslation = memo(function PageTranslation({
   );
 });
 
-export function TranslationPane({
+function PdfTranslationPane({
+  currentPage,
+  pageTranslation,
+  onRetryPage,
+  canRetryPage,
+  onOpenVocabulary,
+  selectionTranslation,
+  onClearSelectionTranslation,
+}: Omit<PdfTranslationPaneProps, "mode">) {
+  const [revealedText, setRevealedText] = useState("");
+
+  useEffect(() => {
+    const fullText = pageTranslation?.translatedText ?? "";
+
+    if (pageTranslation?.status !== "done" || !fullText) {
+      setRevealedText("");
+      return;
+    }
+
+    if (pageTranslation.isCached) {
+      setRevealedText(fullText);
+      return;
+    }
+
+    setRevealedText("");
+    const intervalId = window.setInterval(() => {
+      setRevealedText((current) => {
+        const next = getNextRevealText(current, fullText, 24);
+        if (next === fullText) {
+          window.clearInterval(intervalId);
+        }
+        return next;
+      });
+    }, 18);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    pageTranslation?.isCached,
+    pageTranslation?.page,
+    pageTranslation?.status,
+    pageTranslation?.translatedText,
+  ]);
+
+  return (
+    <div className="translation-pane page-translation-pane">
+      <div className="page-translation-shell">
+        <div className="page-translation-header">
+          <div className="page-translation-header-main">
+            <span className="page-translation-label">Page {currentPage}</span>
+            {pageTranslation?.isCached ? (
+              <span className="page-translation-badge">Cached</span>
+            ) : null}
+          </div>
+          <div className="page-translation-actions">
+            <button
+              className="btn btn-ghost btn-icon-only"
+              type="button"
+              onClick={onOpenVocabulary}
+              aria-label="Open vocabulary"
+              title="Vocabulary"
+            >
+              <VocabularyIcon />
+            </button>
+            <button
+              className="btn btn-ghost btn-icon-only"
+              type="button"
+              onClick={() => onRetryPage(currentPage)}
+              disabled={!canRetryPage}
+              aria-label="Redo page translation"
+              title="Redo page"
+            >
+              <RetryIcon />
+            </button>
+          </div>
+        </div>
+
+        {pageTranslation?.status === "unavailable" ? (
+          <div className="page-translation-empty">
+            This PDF does not contain usable text yet. Please OCR it first, then
+            reopen it in Readany.
+          </div>
+        ) : pageTranslation?.status === "error" ? (
+          <div className="page-translation-error">
+            <p>{pageTranslation.error || "Translation failed for this page."}</p>
+            <button className="btn btn-primary" onClick={() => onRetryPage(currentPage)}>
+              Retry page
+            </button>
+          </div>
+        ) : pageTranslation?.status === "done" ? (
+          <div className="page-translation-content">{revealedText}</div>
+        ) : (
+          <div className="page-translation-loading">
+            <div className="page-translation-spinner" />
+            <p>Translating this page...</p>
+          </div>
+        )}
+      </div>
+
+      {selectionTranslation ? (
+        <Popover.Root open={true} onOpenChange={(open) => !open && onClearSelectionTranslation()}>
+          <Popover.Anchor
+            style={{
+              position: "fixed",
+              left: selectionTranslation.position.x,
+              top: selectionTranslation.position.y,
+            }}
+          />
+          <Popover.Portal>
+            <Popover.Content
+              className="selection-popover"
+              sideOffset={8}
+              onPointerDownOutside={onClearSelectionTranslation}
+              onEscapeKeyDown={onClearSelectionTranslation}
+            >
+              <div className="selection-popover-source">{selectionTranslation.text}</div>
+              <div className="selection-popover-divider" />
+              {selectionTranslation.isLoading ? (
+                <div className="selection-popover-loading">Translating...</div>
+              ) : selectionTranslation.error ? (
+                <div className="selection-popover-error">{selectionTranslation.error}</div>
+              ) : (
+                <div className="selection-popover-translation">
+                  {selectionTranslation.translation}
+                </div>
+              )}
+              <Popover.Arrow className="word-popover-arrow" />
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
+      ) : null}
+    </div>
+  );
+}
+
+function EpubTranslationPane({
   pages,
+  currentPage,
+  onOpenVocabulary,
   activePid,
   hoverPid,
   onHoverPid,
@@ -250,7 +416,7 @@ export function TranslationPane({
   onClearWordTranslation,
   onToggleLikeWord,
   scrollToPage,
-}: TranslationPaneProps) {
+}: Omit<EpubTranslationPaneProps, "mode">) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const lastHandledScrollPageRef = useRef<number | null>(null);
 
@@ -269,12 +435,29 @@ export function TranslationPane({
 
   return (
     <div className="translation-pane">
+      <div className="translation-pane-header">
+        <div className="page-translation-header-main">
+          <span className="page-translation-label">Translation</span>
+          <span className="translation-pane-page">Page {currentPage}</span>
+        </div>
+        <div className="page-translation-actions">
+          <button
+            className="btn btn-ghost btn-icon-only"
+            type="button"
+            onClick={onOpenVocabulary}
+            aria-label="Open vocabulary"
+            title="Vocabulary"
+          >
+            <VocabularyIcon />
+          </button>
+        </div>
+      </div>
       <Virtuoso
         ref={virtuosoRef}
-        style={{ height: "100%" }}
+        style={{ flex: 1, minHeight: 0 }}
         totalCount={pages.length}
         itemContent={(index) => (
-          <PageTranslation
+          <EpubPageTranslation
             page={pages[index]}
             activePid={activePid}
             hoverPid={hoverPid}
@@ -285,7 +468,7 @@ export function TranslationPane({
           />
         )}
       />
-      {wordTranslation && (
+      {wordTranslation ? (
         <Popover.Root open={true} onOpenChange={(open) => !open && onClearWordTranslation()}>
           <Popover.Anchor
             style={{
@@ -306,25 +489,31 @@ export function TranslationPane({
                 <button
                   className={`word-like-btn ${wordTranslation.isLiked ? "is-liked" : ""}`}
                   onClick={() => onToggleLikeWord(wordTranslation)}
-                  title={wordTranslation.isLiked ? "Remove from vocabulary" : "Add to vocabulary"}
+                  title={
+                    wordTranslation.isLiked
+                      ? "Remove from vocabulary"
+                      : "Add to vocabulary"
+                  }
                 >
                   <HeartIcon filled={wordTranslation.isLiked} />
                 </button>
               </div>
-              {wordTranslation.phonetic && (
+              {wordTranslation.phonetic ? (
                 <div className="word-popover-phonetic">
                   <span className="phonetic-label">UK</span>
                   <span className="phonetic-text">{wordTranslation.phonetic}</span>
                 </div>
-              )}
+              ) : null}
               {wordTranslation.isLoading ? (
                 <div className="word-popover-loading">Looking up...</div>
               ) : (
                 <div className="word-popover-definitions">
-                  {wordTranslation.definitions.map((def, index) => (
+                  {wordTranslation.definitions.map((definition, index) => (
                     <div key={index} className="word-definition">
-                      {def.pos && <span className="word-pos">{def.pos}</span>}
-                      <span className="word-meanings">{def.meanings}</span>
+                      {definition.pos ? (
+                        <span className="word-pos">{definition.pos}</span>
+                      ) : null}
+                      <span className="word-meanings">{definition.meanings}</span>
                     </div>
                   ))}
                 </div>
@@ -333,7 +522,41 @@ export function TranslationPane({
             </Popover.Content>
           </Popover.Portal>
         </Popover.Root>
-      )}
+      ) : null}
     </div>
+  );
+}
+
+export function TranslationPane(props: TranslationPaneProps) {
+  if (props.mode === "pdf") {
+    return (
+      <PdfTranslationPane
+        currentPage={props.currentPage}
+        pageTranslation={props.pageTranslation}
+        onRetryPage={props.onRetryPage}
+        canRetryPage={props.canRetryPage}
+        onOpenVocabulary={props.onOpenVocabulary}
+        selectionTranslation={props.selectionTranslation}
+        onClearSelectionTranslation={props.onClearSelectionTranslation}
+      />
+    );
+  }
+
+  return (
+    <EpubTranslationPane
+      pages={props.pages}
+      currentPage={props.currentPage}
+      onOpenVocabulary={props.onOpenVocabulary}
+      activePid={props.activePid}
+      hoverPid={props.hoverPid}
+      onHoverPid={props.onHoverPid}
+      onTranslatePid={props.onTranslatePid}
+      onLocatePid={props.onLocatePid}
+      onTranslateText={props.onTranslateText}
+      wordTranslation={props.wordTranslation}
+      onClearWordTranslation={props.onClearWordTranslation}
+      onToggleLikeWord={props.onToggleLikeWord}
+      scrollToPage={props.scrollToPage}
+    />
   );
 }

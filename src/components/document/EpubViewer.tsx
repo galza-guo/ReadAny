@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import ePub from "epubjs";
 import type { Book, NavItem, Rendition } from "epubjs";
-import * as ScrollArea from "@radix-ui/react-scroll-area";
 
 export type EpubParagraph = {
   pid: string;
@@ -17,6 +16,8 @@ type EpubViewerProps = {
   onMetadata: (metadata: { title: string; author?: string; coverImage?: string }) => void;
   onParagraphsExtracted: (paragraphs: EpubParagraph[]) => void;
   onCurrentPageChange: (page: number, total: number) => void;
+  onTocChange?: (toc: NavItem[]) => void;
+  onCurrentChapterChange?: (chapter: string) => void;
   onLoadingProgress?: (progress: number | null) => void;
   onHrefChange?: (href: string) => void;
   scale: number;
@@ -24,6 +25,7 @@ type EpubViewerProps = {
 
 export type EpubViewerHandle = {
   navigateTo: (pid: string) => void;
+  navigateToHref: (href: string) => void;
 };
 
 export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubViewer({
@@ -31,6 +33,8 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
   onMetadata,
   onParagraphsExtracted,
   onCurrentPageChange,
+  onTocChange,
+  onCurrentChapterChange,
   onLoadingProgress,
   onHrefChange,
   scale,
@@ -41,7 +45,6 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
   const tocRef = useRef<NavItem[]>([]);
   const paragraphMapRef = useRef<Map<string, string>>(new Map()); // pid -> href
   const paragraphSourceRef = useRef<Map<string, string>>(new Map()); // pid -> source text
-  const [toc, setToc] = useState<NavItem[]>([]);
   const [currentChapter, setCurrentChapter] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
@@ -49,6 +52,8 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
   const onMetadataRef = useRef(onMetadata);
   const onParagraphsExtractedRef = useRef(onParagraphsExtracted);
   const onCurrentPageChangeRef = useRef(onCurrentPageChange);
+  const onTocChangeRef = useRef(onTocChange);
+  const onCurrentChapterChangeRef = useRef(onCurrentChapterChange);
   const onLoadingProgressRef = useRef(onLoadingProgress);
   const onHrefChangeRef = useRef(onHrefChange);
 
@@ -78,6 +83,14 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
   useEffect(() => {
     onCurrentPageChangeRef.current = onCurrentPageChange;
   }, [onCurrentPageChange]);
+
+  useEffect(() => {
+    onTocChangeRef.current = onTocChange;
+  }, [onTocChange]);
+
+  useEffect(() => {
+    onCurrentChapterChangeRef.current = onCurrentChapterChange;
+  }, [onCurrentChapterChange]);
 
   useEffect(() => {
     onLoadingProgressRef.current = onLoadingProgress;
@@ -116,6 +129,12 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
         onHrefChangeRef.current?.(href);
       }
     },
+    navigateToHref: (href: string) => {
+      if (renditionRef.current) {
+        renditionRef.current.display(href);
+        onHrefChangeRef.current?.(href);
+      }
+    },
   }), []);
 
   // Load book only when fileData changes
@@ -141,8 +160,10 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
         paragraphMapRef.current.clear();
         paragraphSourceRef.current.clear();
 
-        // Create book from array buffer
-        const book = ePub(fileData.buffer);
+        // Copy into a plain ArrayBuffer so epub.js gets the binary type it expects.
+        const bookData = new ArrayBuffer(fileData.byteLength);
+        new Uint8Array(bookData).set(fileData);
+        const book = ePub(bookData);
         bookRef.current = book;
         onLoadingProgressRef.current?.(15);
 
@@ -164,7 +185,7 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
         // Get table of contents
         const navigation = await book.loaded.navigation;
         tocRef.current = navigation.toc;
-        setToc(navigation.toc);
+        onTocChangeRef.current?.(navigation.toc);
 
         // Create rendition
         const rendition = book.renderTo(containerRef.current!, {
@@ -197,6 +218,7 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
             });
             if (chapter) {
               setCurrentChapter(chapter.label);
+              onCurrentChapterChangeRef.current?.(chapter.label);
             }
           }
         });
@@ -334,36 +356,8 @@ export const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function
     renditionRef.current?.next();
   }, []);
 
-  const handleTocClick = useCallback((href: string) => {
-    if (renditionRef.current) {
-      renditionRef.current.display(href);
-      onHrefChangeRef.current?.(href);
-    }
-  }, []);
-
   return (
     <div className="epub-viewer">
-      <div className="epub-sidebar">
-        <div className="epub-sidebar-title">Contents</div>
-        <ScrollArea.Root className="epub-toc-scroll">
-          <ScrollArea.Viewport className="epub-toc-viewport">
-            <div className="epub-toc">
-              {toc.map((item, index) => (
-                <button
-                  key={item.href || index}
-                  className={`epub-toc-item ${currentChapter === item.label ? "is-active" : ""}`}
-                  onClick={() => handleTocClick(item.href)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </ScrollArea.Viewport>
-          <ScrollArea.Scrollbar orientation="vertical" className="scrollbar">
-            <ScrollArea.Thumb className="scrollbar-thumb" />
-          </ScrollArea.Scrollbar>
-        </ScrollArea.Root>
-      </div>
       <div className="epub-content">
         {loading && <div className="epub-loading">Loading EPUB...</div>}
         <div ref={containerRef} className="epub-container" />

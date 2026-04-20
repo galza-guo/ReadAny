@@ -4,8 +4,7 @@ import * as ScrollArea from "@radix-ui/react-scroll-area";
 import type { ChatMessage } from "../../types";
 
 type ChatPanelProps = {
-  isOpen: boolean;
-  onClose: () => void;
+  isVisible: boolean;
   model: string;
   getCurrentPageText: () => string;
   getSurroundingPagesText: () => string;
@@ -27,15 +26,6 @@ function SendIcon() {
   );
 }
 
-function CloseIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-
 function SparkleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -45,8 +35,7 @@ function SparkleIcon() {
 }
 
 export function ChatPanel({
-  isOpen,
-  onClose,
+  isVisible,
   model,
   getCurrentPageText,
   getSurroundingPagesText,
@@ -58,10 +47,10 @@ export function ChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (isOpen && inputRef.current) {
+    if (isVisible && inputRef.current) {
       inputRef.current.focus();
     }
-  }, [isOpen]);
+  }, [isVisible]);
 
   useEffect(() => {
     // Scroll to bottom when new messages arrive
@@ -137,8 +126,6 @@ export function ChatPanel({
     setMessages([]);
   }, []);
 
-  if (!isOpen) return null;
-
   return (
     <div className="chat-panel">
       <div className="chat-header">
@@ -152,9 +139,6 @@ export function ChatPanel({
               Clear
             </button>
           )}
-          <button className="chat-close" onClick={onClose}>
-            <CloseIcon />
-          </button>
         </div>
       </div>
 
