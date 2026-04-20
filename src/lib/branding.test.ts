@@ -19,10 +19,11 @@ describe("branding", () => {
     const navigationPrefsSource = readRepoFile("src", "lib", "pdfNavigationPrefs.ts");
 
     expect(packageJson).toContain('"name": "readani"');
+    expect(packageJson).toContain('"version": "1.0.0"');
     expect(appSource).toContain('const APP_WINDOW_TITLE = "readani"');
     expect(appSource).toContain("`${APP_WINDOW_TITLE} · ${trimmedBookTitle}`");
     expect(appSource).toContain("document.title = nextWindowTitle");
-    expect(appSource).toContain("getCurrentWindow().setTitle(nextWindowTitle)");
+    expect(appSource).toContain('.setTitle(nextWindowTitle)');
     expect(defaultCapability).toContain('"core:window:allow-set-title"');
 
     expect(homeView).toContain('import readaniBannerForDarkTheme');
@@ -40,16 +41,26 @@ describe("branding", () => {
     );
 
     expect(indexHtml).toContain("<title>readani</title>");
+    expect(indexHtml).toContain('href="/appicon.png"');
     expect(indexHtml).not.toContain("PDF Read");
+    expect(indexHtml).not.toContain("/vite.svg");
 
     expect(tauriConfig).toContain('"productName": "readani"');
+    expect(tauriConfig).toContain('"version": "1.0.0"');
+    expect(tauriConfig).toContain(
+      '"shortDescription": "Desktop bilingual PDF and EPUB reader for side-by-side translation."'
+    );
     expect(tauriConfig).toContain('"identifier": "com.xnu.readani"');
     expect(tauriConfig).toContain('"title": "readani"');
-    expect(tauriConfig).toContain('"shortDescription": "readani"');
     expect(tauriConfig).not.toContain("PDFRead");
     expect(tauriConfig).not.toContain("pdfread");
 
     expect(cargoToml).toContain('name = "readani"');
+    expect(cargoToml).toContain('version = "1.0.0"');
+    expect(cargoToml).toContain(
+      'description = "Desktop bilingual PDF and EPUB reader for side-by-side translation."'
+    );
+    expect(cargoToml).toContain('authors = ["Gallant GUO <glt@gallantguo.com>"]');
     expect(cargoToml).toContain('name = "readani_lib"');
     expect(cargoToml).not.toContain("PDFRead");
     expect(cargoToml).not.toContain("pdfread");
