@@ -1,0 +1,197 @@
+import type {
+  TargetLanguage,
+  ThemeMode,
+  TranslationPreset,
+  TranslationProviderKind,
+  TranslationSettings,
+} from "../types";
+
+export const DEFAULT_LANGUAGE: TargetLanguage = {
+  code: "zh-CN",
+  label: "Chinese (Simplified)",
+};
+
+export const DEFAULT_THEME: ThemeMode = "system";
+
+export const LANGUAGE_PRESETS: TargetLanguage[] = [
+  { label: "Chinese (Simplified)", code: "zh-CN" },
+  { label: "Chinese (Traditional)", code: "zh-TW" },
+  { label: "Japanese", code: "ja" },
+  { label: "Korean", code: "ko" },
+  { label: "Spanish", code: "es" },
+  { label: "French", code: "fr" },
+  { label: "German", code: "de" },
+  { label: "Italian", code: "it" },
+];
+
+export const PRESET_PROVIDER_OPTIONS: Array<{
+  value: TranslationProviderKind;
+  label: string;
+}> = [
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "openai-compatible", label: "OpenAI-Compatible" },
+];
+
+const LANGUAGE_LABELS: Record<string, string> = Object.fromEntries(
+  LANGUAGE_PRESETS.map((preset) => [preset.code, preset.label])
+);
+
+const PROVIDER_LABELS: Record<TranslationProviderKind, string> = {
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  "openai-compatible": "Custom",
+};
+
+const DEFAULT_MODELS: Record<TranslationProviderKind, string> = {
+  openrouter: "openai/gpt-4o-mini",
+  deepseek: "deepseek-chat",
+  "openai-compatible": "gpt-4o-mini",
+};
+
+const DEFAULT_BASE_URLS: Partial<Record<TranslationProviderKind, string>> = {
+  deepseek: "https://api.deepseek.com",
+};
+
+type LanguageLike = {
+  code?: string;
+  label?: string;
+};
+
+type PresetLike = {
+  id: string;
+};
+
+type AppSettingsLike<TPreset extends PresetLike> = {
+  activePresetId?: string;
+  presets: TPreset[];
+};
+
+export function buildPresetLabel(
+  providerKind: TranslationProviderKind | string,
+  model: string
+) {
+  const providerLabel =
+    PROVIDER_LABELS[providerKind as TranslationProviderKind] ?? "Provider";
+  const trimmedModel = model.trim();
+
+  if (!trimmedModel) {
+    return providerLabel;
+  }
+
+  return `${providerLabel} · ${trimmedModel}`;
+}
+
+export function dedupePresetLabel(label: string, existingLabels: string[]) {
+  if (!existingLabels.includes(label)) {
+    return label;
+  }
+
+  let suffix = 2;
+  let candidate = `${label} (${suffix})`;
+
+  while (existingLabels.includes(candidate)) {
+    suffix += 1;
+    candidate = `${label} (${suffix})`;
+  }
+
+  return candidate;
+}
+
+export function getActivePreset<TPreset extends PresetLike>(
+  settings: AppSettingsLike<TPreset>
+) {
+  if (settings.presets.length === 0) {
+    return undefined;
+  }
+
+  return (
+    settings.presets.find((preset) => preset.id === settings.activePresetId) ??
+    settings.presets[0]
+  );
+}
+
+export function normalizeDefaultLanguage(language?: LanguageLike): TargetLanguage {
+  const code = language?.code?.trim() || DEFAULT_LANGUAGE.code;
+  const fallbackLabel = LANGUAGE_LABELS[code] ?? code;
+  const label = language?.label?.trim() || fallbackLabel;
+
+  return {
+    code,
+    label,
+  };
+}
+
+export function getNextThemeMode(theme: ThemeMode): ThemeMode {
+  if (theme === "system") {
+    return "light";
+  }
+
+  if (theme === "light") {
+    return "dark";
+  }
+
+  return "system";
+}
+
+export function getDefaultModelForProvider(providerKind: TranslationProviderKind) {
+  return DEFAULT_MODELS[providerKind];
+}
+
+export function normalizePresetDraft(
+  preset: TranslationPreset,
+  presets: TranslationPreset[]
+): TranslationPreset {
+  const normalizedModel = preset.model.trim() || getDefaultModelForProvider(preset.providerKind);
+  const nextLabel = buildPresetLabel(preset.providerKind, normalizedModel);
+  const otherLabels = presets
+    .filter((candidate) => candidate.id !== preset.id)
+    .map((candidate) => candidate.label);
+
+  return {
+    ...preset,
+    label: dedupePresetLabel(nextLabel, otherLabels),
+    model: normalizedModel,
+    baseUrl:
+      preset.providerKind === "openai-compatible"
+        ? preset.baseUrl?.trim() || undefined
+        : DEFAULT_BASE_URLS[preset.providerKind],
+  };
+}
+
+export function createPresetDraft(
+  providerKind: TranslationProviderKind,
+  presets: TranslationPreset[]
+): TranslationPreset {
+  const preset = normalizePresetDraft(
+    {
+      id: createPresetId(),
+      label: "",
+      providerKind,
+      baseUrl: DEFAULT_BASE_URLS[providerKind],
+      model: getDefaultModelForProvider(providerKind),
+    },
+    presets
+  );
+
+  return preset;
+}
+
+export function createDefaultSettings(): TranslationSettings {
+  const initialPreset = createPresetDraft("openrouter", []);
+
+  return {
+    activePresetId: initialPreset.id,
+    defaultLanguage: DEFAULT_LANGUAGE,
+    theme: DEFAULT_THEME,
+    presets: [initialPreset],
+  };
+}
+
+function createPresetId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
