@@ -4,6 +4,7 @@ import {
   READER_SPLIT_HANDLE_SIZE,
   clampReaderColumnPairSizes,
   clampReaderRailSectionPairSizes,
+  didReaderRailBecomeVisible,
   getReaderColumnLayoutKey,
   getReaderWorkspaceMinHeight,
   getReaderWorkspaceMinWidth,
@@ -58,6 +59,44 @@ describe("visible layout helpers", () => {
         chat: true,
       })
     ).toEqual(["translation", "chat"]);
+  });
+
+  test("detects when the shared right rail becomes visible", () => {
+    expect(
+      didReaderRailBecomeVisible(
+        {
+          navigation: false,
+          original: true,
+          translation: false,
+          chat: false,
+        },
+        {
+          navigation: false,
+          original: true,
+          translation: true,
+          chat: false,
+        }
+      )
+    ).toBe(true);
+  });
+
+  test("does not fire when the rail was already visible", () => {
+    expect(
+      didReaderRailBecomeVisible(
+        {
+          navigation: false,
+          original: true,
+          translation: true,
+          chat: false,
+        },
+        {
+          navigation: false,
+          original: true,
+          translation: true,
+          chat: true,
+        }
+      )
+    ).toBe(false);
   });
 });
 

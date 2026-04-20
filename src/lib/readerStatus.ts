@@ -4,6 +4,8 @@ export type ReaderStatusKind =
   | "extracting-text"
   | "translating-page"
   | "redoing-page"
+  | "translating-section"
+  | "redoing-section"
   | "translation-failed";
 
 export type ReaderStatusOptions = {
@@ -28,6 +30,14 @@ export function getReaderStatusLabel(
 
   if (kind === "redoing-page") {
     return options.page ? `Redoing page ${options.page}` : "Redoing page";
+  }
+
+  if (kind === "translating-section") {
+    return "Translating section";
+  }
+
+  if (kind === "redoing-section") {
+    return "Redoing section";
   }
 
   if (kind === "translation-failed") {

@@ -5,24 +5,22 @@ import type {
   TranslationProviderKind,
   TranslationSettings,
 } from "../types";
+import {
+  DEFAULT_LANGUAGE,
+  getLanguageLabel,
+} from "./languageOptions";
 
-export const DEFAULT_LANGUAGE: TargetLanguage = {
-  code: "zh-CN",
-  label: "Chinese (Simplified)",
-};
+export {
+  buildCustomLanguage,
+  buildLanguagePickerSections,
+  COMMON_LANGUAGE_PRESETS,
+  DEFAULT_LANGUAGE,
+  getCustomLanguageOption,
+  isCustomLanguage,
+  LANGUAGE_PRESETS,
+} from "./languageOptions";
 
 export const DEFAULT_THEME: ThemeMode = "system";
-
-export const LANGUAGE_PRESETS: TargetLanguage[] = [
-  { label: "Chinese (Simplified)", code: "zh-CN" },
-  { label: "Chinese (Traditional)", code: "zh-TW" },
-  { label: "Japanese", code: "ja" },
-  { label: "Korean", code: "ko" },
-  { label: "Spanish", code: "es" },
-  { label: "French", code: "fr" },
-  { label: "German", code: "de" },
-  { label: "Italian", code: "it" },
-];
 
 export const PRESET_PROVIDER_OPTIONS: Array<{
   value: TranslationProviderKind;
@@ -33,9 +31,7 @@ export const PRESET_PROVIDER_OPTIONS: Array<{
   { value: "openai-compatible", label: "OpenAI-Compatible" },
 ];
 
-const LANGUAGE_LABELS: Record<string, string> = Object.fromEntries(
-  LANGUAGE_PRESETS.map((preset) => [preset.code, preset.label])
-);
+export const SAVED_API_KEY_MASK = "**************";
 
 const PROVIDER_LABELS: Record<TranslationProviderKind, string> = {
   openrouter: "OpenRouter",
@@ -113,7 +109,7 @@ export function getActivePreset<TPreset extends PresetLike>(
 
 export function normalizeDefaultLanguage(language?: LanguageLike): TargetLanguage {
   const code = language?.code?.trim() || DEFAULT_LANGUAGE.code;
-  const fallbackLabel = LANGUAGE_LABELS[code] ?? code;
+  const fallbackLabel = getLanguageLabel(code) ?? code;
   const label = language?.label?.trim() || fallbackLabel;
 
   return {
@@ -138,11 +134,56 @@ export function getDefaultModelForProvider(providerKind: TranslationProviderKind
   return DEFAULT_MODELS[providerKind];
 }
 
+export function getProviderOptionLabel(providerKind: TranslationProviderKind) {
+  return (
+    PRESET_PROVIDER_OPTIONS.find((provider) => provider.value === providerKind)?.label ??
+    "Provider"
+  );
+}
+
+export function getPresetValidationState(
+  preset: TranslationPreset,
+  apiKeyInput: string
+) {
+  const provider = Boolean(preset.providerKind);
+  const model = Boolean(preset.model.trim());
+  const baseUrl =
+    preset.providerKind !== "openai-compatible" || Boolean(preset.baseUrl?.trim());
+  const apiKey = Boolean(apiKeyInput.trim() || preset.apiKeyConfigured);
+
+  return {
+    provider,
+    model,
+    baseUrl,
+    apiKey,
+    isValid: provider && model && baseUrl && apiKey,
+  };
+}
+
+export function getPresetApiKeyFieldState({
+  apiKeyConfigured,
+  apiKeyInput,
+  isEditing,
+}: {
+  apiKeyConfigured?: boolean;
+  apiKeyInput: string;
+  isEditing: boolean;
+}) {
+  const hasDraft = Boolean(apiKeyInput.trim());
+  const showsSavedMask = Boolean(apiKeyConfigured && !hasDraft && !isEditing);
+
+  return {
+    displayValue: hasDraft ? apiKeyInput : "",
+    placeholder: showsSavedMask ? SAVED_API_KEY_MASK : "e.g. sk-...",
+    showsSavedMask,
+  };
+}
+
 export function normalizePresetDraft(
   preset: TranslationPreset,
   presets: TranslationPreset[]
 ): TranslationPreset {
-  const normalizedModel = preset.model.trim() || getDefaultModelForProvider(preset.providerKind);
+  const normalizedModel = preset.model.trim();
   const nextLabel = buildPresetLabel(preset.providerKind, normalizedModel);
   const otherLabels = presets
     .filter((candidate) => candidate.id !== preset.id)
@@ -169,7 +210,7 @@ export function createPresetDraft(
       label: "",
       providerKind,
       baseUrl: DEFAULT_BASE_URLS[providerKind],
-      model: getDefaultModelForProvider(providerKind),
+      model: "",
     },
     presets
   );
@@ -178,13 +219,11 @@ export function createPresetDraft(
 }
 
 export function createDefaultSettings(): TranslationSettings {
-  const initialPreset = createPresetDraft("openrouter", []);
-
   return {
-    activePresetId: initialPreset.id,
+    activePresetId: "",
     defaultLanguage: DEFAULT_LANGUAGE,
     theme: DEFAULT_THEME,
-    presets: [initialPreset],
+    presets: [],
   };
 }
 

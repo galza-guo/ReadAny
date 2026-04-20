@@ -78,6 +78,16 @@ export function getVisibleRailSections(panels: ReaderPanelsState): ReaderRailSec
   return READER_RAIL_SECTION_ORDER.filter((section) => panels[section]);
 }
 
+export function didReaderRailBecomeVisible(
+  previousPanels: ReaderPanelsState,
+  nextPanels: ReaderPanelsState
+): boolean {
+  const wasVisible = previousPanels.translation || previousPanels.chat;
+  const isVisible = nextPanels.translation || nextPanels.chat;
+
+  return !wasVisible && isVisible;
+}
+
 export function ensureAtLeastOnePanelVisible(panels: ReaderPanelsState): ReaderPanelsState {
   if (getOrderedVisiblePanels(panels).length > 0) {
     return panels;

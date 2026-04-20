@@ -11,6 +11,7 @@ type PageTranslationProgress = {
   translatedCount: number;
   totalCount: number;
   isFullyTranslated: boolean;
+  unitLabel: "pages" | "sections";
 };
 
 type DequeueNextPageArgs = {
@@ -35,6 +36,10 @@ function getPageSourceText(page?: PageDoc) {
     .map((paragraph) => paragraph.source.trim())
     .filter(Boolean)
     .join("\n\n");
+}
+
+function normalizeSectionHref(href?: string) {
+  return href ? href.split("#")[0] : "";
 }
 
 export function enqueueForegroundPage(queue: number[], page: number) {
@@ -110,11 +115,56 @@ export function getPageTranslationProgress({
     totalCount: translatablePages.length,
     isFullyTranslated:
       translatablePages.length > 0 && translatedPages.length === translatablePages.length,
+    unitLabel: "pages",
+  };
+}
+
+export function getEpubSectionTranslationProgress(pages: PageDoc[]): PageTranslationProgress {
+  const sections = new Map<
+    string,
+    {
+      hasTranslatableParagraph: boolean;
+      isTranslated: boolean;
+    }
+  >();
+
+  for (const page of pages) {
+    for (const paragraph of page.paragraphs) {
+      const normalizedHref = normalizeSectionHref(paragraph.epubHref);
+      const sectionKey = normalizedHref || paragraph.sectionTitle || `page:${page.page}`;
+      const hasUsableText = hasUsablePageText(paragraph.source);
+      const existing = sections.get(sectionKey) ?? {
+        hasTranslatableParagraph: false,
+        isTranslated: true,
+      };
+
+      if (hasUsableText) {
+        existing.hasTranslatableParagraph = true;
+        if (paragraph.status !== "done") {
+          existing.isTranslated = false;
+        }
+      }
+
+      sections.set(sectionKey, existing);
+    }
+  }
+
+  const translatableSections = Array.from(sections.values()).filter(
+    (section) => section.hasTranslatableParagraph
+  );
+  const translatedSections = translatableSections.filter((section) => section.isTranslated);
+
+  return {
+    translatedCount: translatedSections.length,
+    totalCount: translatableSections.length,
+    isFullyTranslated:
+      translatableSections.length > 0 && translatedSections.length === translatableSections.length,
+    unitLabel: "sections",
   };
 }
 
 export function getFullBookActionLabel(progress: PageTranslationProgress) {
-  return progress.isFullyTranslated ? "Replace All" : "Translate All";
+  return progress.isFullyTranslated ? "Retranslate All" : "Translate All";
 }
 
 export function bumpRequestVersion(

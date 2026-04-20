@@ -4,6 +4,7 @@ import {
   dequeueNextPage,
   enqueueBackgroundPages,
   enqueueForegroundPage,
+  getEpubSectionTranslationProgress,
   getFullBookActionLabel,
   getPageTranslationProgress,
   isRequestVersionCurrent,
@@ -79,16 +80,90 @@ describe("pageTranslationScheduler progress", () => {
       translatedCount: 2,
       totalCount: 2,
       isFullyTranslated: true,
+      unitLabel: "pages",
     });
   });
 
-  test("uses Replace All only when every translatable page is already translated", () => {
-    expect(getFullBookActionLabel({ translatedCount: 1, totalCount: 3, isFullyTranslated: false })).toBe(
+  test("uses Retranslate All only when every translatable page is already translated", () => {
+    expect(
+      getFullBookActionLabel({
+        translatedCount: 1,
+        totalCount: 3,
+        isFullyTranslated: false,
+        unitLabel: "pages",
+      })
+    ).toBe(
       "Translate All"
     );
-    expect(getFullBookActionLabel({ translatedCount: 3, totalCount: 3, isFullyTranslated: true })).toBe(
-      "Replace All"
+    expect(
+      getFullBookActionLabel({
+        translatedCount: 3,
+        totalCount: 3,
+        isFullyTranslated: true,
+        unitLabel: "pages",
+      })
+    ).toBe(
+      "Retranslate All"
     );
+  });
+
+  test("counts EPUB section progress by unique href instead of virtual page", () => {
+    const pages: PageDoc[] = [
+      {
+        page: 1,
+        title: "Chapter 1",
+        paragraphs: [
+          {
+            pid: "a",
+            page: 1,
+            source: "A readable opening paragraph.",
+            translation: "Translated opening paragraph.",
+            status: "done",
+            rects: [],
+            epubHref: "chap1.xhtml",
+            sectionTitle: "Chapter 1",
+          },
+        ],
+      },
+      {
+        page: 2,
+        title: "Chapter 1",
+        paragraphs: [
+          {
+            pid: "b",
+            page: 2,
+            source: "Another readable paragraph in the same chapter.",
+            translation: "Translated follow-up paragraph.",
+            status: "done",
+            rects: [],
+            epubHref: "chap1.xhtml#part-2",
+            sectionTitle: "Chapter 1",
+          },
+        ],
+      },
+      {
+        page: 3,
+        title: "Chapter 2",
+        paragraphs: [
+          {
+            pid: "c",
+            page: 3,
+            source: "A readable second chapter paragraph.",
+            status: "idle",
+            rects: [],
+            epubHref: "chap2.xhtml",
+            sectionTitle: "Chapter 2",
+          },
+        ],
+      },
+    ];
+
+    expect(getEpubSectionTranslationProgress(pages)).toEqual({
+      translatedCount: 1,
+      totalCount: 2,
+      isFullyTranslated: false,
+      unitLabel: "sections",
+    });
   });
 });
 
