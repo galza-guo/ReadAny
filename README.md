@@ -1,93 +1,137 @@
 # readani
 
-readani is a Tauri desktop bilingual reader for PDFs, with preserved EPUB support.
-
 <p align="center">
-  <img src="./screenshot.png" alt="readani Screenshot" width="860" />
+  <img src="./screenshot.png" alt="readani screenshot" width="960" />
 </p>
 
-## Why readani
+<p align="center">
+  A desktop bilingual reader for PDFs and EPUBs, built for staying in the text instead of bouncing between tabs.
+</p>
 
-Reading a PDF in another language is slow when you have to translate paragraph by paragraph. readani keeps the original page on the left and a readable translation of that same page on the right, so you can stay in flow while still checking the source.
+<p align="center">
+  <strong>v1.0.0</strong> · Tauri · React · TypeScript · pdf.js
+</p>
 
-## MVP Highlights
+## What It Is
 
-- PDF-first, single-page reading layout.
-- Current page translation with next-page prefetch.
-- Page-level local cache so reopened pages can return instantly.
-- Hidden but selectable PDF text layer for text-based and OCR-text PDFs.
-- Selection pop-up translation for words, phrases, or short sentences.
-- Provider-ready backend with OpenRouter and OpenAI-compatible endpoint support.
-- Manual model entry fallback when model listing is unavailable.
-- EPUB support remains available through the existing flow.
+`readani` keeps the original document on the left and the translation on the right, so you can read a foreign-language PDF or EPUB with much less friction. Instead of copying chunks into another tool, you stay inside one focused reading workspace.
+
+It is especially good for research papers, essays, manuals, reports, and other documents where context matters sentence by sentence.
+
+## Why It Exists
+
+Most translation workflows break reading flow:
+
+- you copy text out of the document
+- you lose page context
+- you jump between windows
+- you struggle to match translated text back to the original page
+
+`readani` is built to fix that. It keeps the source document visible, keeps translations nearby, and lets you move around the document without losing your place.
+
+## Highlights
+
+- Side-by-side reading layout for source and translation
+- PDF-first reader with preserved EPUB support
+- Sentence-aware translation presentation
+- Source-page text selection for quick translation lookups
+- Local cache for faster re-opens and repeat reads
+- English-only desktop UI with light, dark, and system theme modes
+- Backend translation requests handled through Tauri/Rust, not from the frontend
+- Provider presets for OpenRouter and OpenAI-compatible endpoints
+
+## v1.0.0
+
+This release is the first polished public release pass for `readani`.
+
+It includes:
+
+- refined home screen and reader shell
+- improved settings workflow
+- release metadata surfaced in-app through About
+- cleaned up branding and version alignment
+- refreshed GitHub documentation
 
 ## How It Works
 
-- Left pane: one PDF page rendered with pdf.js.
-- Right pane: one translated page for the same page number.
-- Translation requests go through the Rust/Tauri backend, not directly from the frontend.
-- The backend stores provider settings and page translations under the app config directory.
-- Page cache keys include document, page, source hash, provider, model, language, and prompt version.
+### Reader layout
 
-## Install (Homebrew)
+- Left: the original PDF or EPUB
+- Right: translations, reading controls, and chat/tools
 
-```bash
-brew update && brew tap everettjf/tap && brew install --cask readani
-```
+### Translation flow
 
-## Develop
+- The frontend never calls translation providers directly
+- Translation requests go through the Tauri backend
+- The backend stores settings and translation cache files under the app config directory
+- Cached results can be reused when the same page and translation inputs match
+
+### PDFs
+
+- Uses `pdfjs-dist/legacy/build/pdf.mjs`
+- Keeps a selectable text layer when the PDF has usable text
+- Handles text-based PDFs and OCR-text PDFs best
+- Image-only PDFs without usable text show a fallback instead of pretending the text exists
+
+## Local Development
+
+### Requirements
+
+- [Bun](https://bun.sh/)
+- Rust toolchain
+- Tauri prerequisites for your platform
+
+### Start the app
 
 ```bash
 bun install
 bun run tauri dev
 ```
 
-## Build
+### Build the frontend bundle
 
 ```bash
 bun run build
 ```
 
-## Usage
-
-1. Open a PDF or EPUB.
-2. Choose your provider, API credentials, model, and target language in Settings.
-3. For PDFs, read one source page on the left and its translated page on the right.
-4. Move pages with the toolbar or keyboard shortcuts:
-   - `ArrowLeft` / `PageUp`
-   - `ArrowRight` / `PageDown`
-5. Select text on the PDF page to get a quick pop-up translation.
-
-## PDF Notes
-
-- Text-based PDFs and OCR-text PDFs work for page translation and selection.
-- Image-only PDFs without usable text show an OCR-needed fallback message.
-- Cached pages skip the typing animation and appear immediately when reopened.
-
-## Settings
-
-- Provider presets:
-  - OpenRouter
-  - OpenAI-compatible endpoint
-- Model discovery when supported
-- Manual model input fallback
-- Target language
-- Theme: system / light / dark
-
 ## Project Structure
 
-- `src/App.tsx`: main app state and reader orchestration
-- `src/components/PdfViewer.tsx`: single-page PDF viewer shell
-- `src/components/PdfPage.tsx`: PDF page rendering and invisible text selection layer
-- `src/components/TranslationPane.tsx`: page translation view and legacy EPUB translation pane
-- `src/components/settings/SettingsDialogContent.tsx`: shared settings UI
-- `src/lib/pageText.ts`: page translation payload helpers
-- `src/lib/pageQueue.ts`: page navigation and prefetch helpers
-- `src/lib/typewriter.ts`: translated text reveal helper
-- `src-tauri/src/lib.rs`: Tauri commands and translation orchestration
-- `src-tauri/src/providers.rs`: provider abstraction helpers
-- `src-tauri/src/page_cache.rs`: page cache helpers
+- `src/App.tsx` - main app state, routing between home and reader, shared dialogs
+- `src/views/HomeView.tsx` - landing view and recent-books entry point
+- `src/components/PdfViewer.tsx` - PDF viewing shell
+- `src/components/PdfPage.tsx` - PDF page rendering and selection layer
+- `src/components/TranslationPane.tsx` - translation presentation
+- `src/components/settings/SettingsDialogContent.tsx` - provider and translation settings UI
+- `src/lib/textExtraction.ts` - PDF text extraction heuristics
+- `src/lib/pageTranslationScheduler.ts` - queued translation flow
+- `src-tauri/src/lib.rs` - Tauri commands and translation orchestration
+- `src-tauri/src/providers.rs` - provider request shaping
+- `src-tauri/src/page_cache.rs` - translation cache handling
 
-## Recommended IDE Setup
+## Product Notes
 
-- VS Code + Tauri extension + rust-analyzer
+- UI copy is intentionally English-only
+- Translation quality depends on the provider, model, and source document quality
+- Cache identity depends on the document, source text, selected model, and target language
+- API keys stay in the app config area, not in the frontend bundle
+
+## Tech Stack
+
+- Tauri
+- Rust
+- React 19
+- TypeScript
+- Radix UI
+- pdf.js
+- Slate
+- react-virtuoso
+
+## Acknowledgements
+
+- Created by Gallant GUO
+- Contact: [glt@gallantguo.com](mailto:glt@gallantguo.com)
+- Special thanks to [Everett (everettjf)](https://github.com/everettjf), author of [PDFRead](https://github.com/everettjf/PDFRead)
+
+## License Notes
+
+This repository includes bundled font assets with their own license text in [`src/assets/fonts/fira-sans-condensed/OFL.txt`](./src/assets/fonts/fira-sans-condensed/OFL.txt).

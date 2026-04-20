@@ -45,7 +45,6 @@ Read PDFs and see sentence‑level translations side‑by‑side, instantly.
 
 ## Call to Action
 - Download for macOS
-- Install via Homebrew
 
 ## Suggested Hero Copy
 **Headline:** Read PDFs in any language, sentence by sentence
@@ -60,10 +59,5 @@ Read PDFs and see sentence‑level translations side‑by‑side, instantly.
 6. Use cases (research, work, language learning)
 7. CTA (download)
 
-## Installation (for the landing page)
-```bash
-brew update && brew tap everettjf/tap && brew install --cask readani
-```
-
 ## Short App Description (for cards)
-readani is a desktop bilingual PDF reader that maps each sentence to its location on the page and shows translations side‑by‑side, so you can read in context.
+readani is a desktop bilingual PDF reader that maps each sentence to its location on the page and shows translations side-by-side, so you can read in context.
