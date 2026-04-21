@@ -25,7 +25,7 @@ When you push a tag like `v1.0.1`, GitHub Actions will:
 3. sign the macOS app with `Developer ID Application: Lite Guo (T96QFDVD9V)`
 4. notarize the finished DMG with Apple `notarytool`
 5. staple the notarization ticket to the DMG
-6. upload both artifacts to the matching GitHub Release
+6. upload the installers, updater signatures, and `latest.json` to the matching GitHub Release
 
 The macOS build uses:
 
@@ -33,10 +33,17 @@ The macOS build uses:
 - direct-download entitlements: [`src-tauri/Entitlements.plist`](/Users/guolite/GitHub/ReadAny/src-tauri/Entitlements.plist)
 - local helper: [`build-dmg.sh`](/Users/guolite/GitHub/ReadAny/build-dmg.sh)
 - notarization helper: [`scripts/notarize_dmg.sh`](/Users/guolite/GitHub/ReadAny/scripts/notarize_dmg.sh)
+- updater manifest helper: [`scripts/generate_latest_json.py`](/Users/guolite/GitHub/ReadAny/scripts/generate_latest_json.py)
 
 Plain-English detail: the workflow now keeps **signing** and **notarization** as two separate steps. That avoids Tauri trying to notarize too early during the app bundle phase, and instead lets Apple’s own notarization tool handle the final DMG in one explicit step.
 
 Another small but important detail: Tauri cleans up its temporary `.app` bundle after it finishes creating the `.dmg`, so the workflow notarizes the finished DMG directly instead of trying to reuse that temporary app folder afterward.
+
+Starting with `v1.1.0`, GitHub Releases also doubles as the app's update feed. The app checks:
+
+`https://github.com/galza-guo/readani/releases/latest/download/latest.json`
+
+That file points the app to the signed updater artifacts for Windows and macOS.
 
 ## Required GitHub Secrets
 
@@ -74,6 +81,17 @@ Fallback option:
 | `APPLE_PASSWORD` | App-specific password for notarization |
 
 The workflow supports either set. It prefers the API key route when present.
+
+### Tauri updater signing
+
+These are required for in-app updates:
+
+| Secret | What it is |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | The Tauri updater private key used to sign updater artifacts |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Optional password for that private key, if you encrypted it |
+
+Plain-English detail: this key is separate from your Apple certificate. Apple signing proves the app came from your Apple developer identity. The Tauri updater key lets the app verify that a downloaded update was published by you before installing it.
 
 ### GitHub token
 
@@ -133,6 +151,17 @@ git push origin v1.0.1
 ```
 
 That tag push starts the release workflow automatically.
+
+For updater-enabled releases, the workflow publishes:
+
+- Windows installer: `.msi`
+- Windows updater signature: `.msi.sig`
+- macOS installer: `.dmg`
+- macOS updater archive: `.app.tar.gz`
+- macOS updater signature: `.app.tar.gz.sig`
+- updater manifest: `latest.json`
+
+`v1.1.0` is the first public release that includes this updater feed. In plain English: users still install `v1.1.0` manually once, but after that the app can fetch later releases inside the app.
 
 ## Future Mac App Store Path
 

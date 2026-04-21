@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>v1.0.0</strong> · Tauri · React · TypeScript · pdf.js
+  <strong>v1.1.0</strong> · Tauri · React · TypeScript · pdf.js
 </p>
 
 ## What It Is
@@ -40,17 +40,16 @@ Most translation workflows break reading flow:
 - Backend translation requests handled through Tauri/Rust, not from the frontend
 - Provider presets for OpenRouter and OpenAI-compatible endpoints
 
-## v1.0.0
+## v1.1.0
 
-This release is the first polished public release pass for `readani`.
+This release makes `readani` updater-ready for future versions.
 
 It includes:
 
-- refined home screen and reader shell
-- improved settings workflow
-- release metadata surfaced in-app through About
-- cleaned up branding and version alignment
-- refreshed GitHub documentation
+- built-in update checks through Tauri's updater plugin
+- background download of available updates with a one-click install action
+- GitHub release metadata for signed updater artifacts and `latest.json`
+- the existing polished home screen, reader shell, and About dialog workflow
 
 ## How It Works
 
