@@ -46,7 +46,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdEQzM5M0U3M0U4MDE1NzQKUldSMEZZQSs1NVBEZlFYc2k3K3B4eVhsaXZWNGdZek92dHQxa1gzc21EVUcwUVBiU1hiTDN5WE4K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM3OTJFMjA2QUYyQTNGNzMKUldSelB5cXZCdUtTeDloMEhiMm9rWkNzSnMzaHpkSHVPUkFtSUpyemNqSFNoRndHbEhWYzFDaTMK",
       "endpoints": [
         "https://github.com/galza-guo/readani/releases/latest/download/latest.json"
       ]
