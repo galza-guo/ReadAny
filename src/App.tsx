@@ -11,6 +11,9 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { NavItem } from "epubjs";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Toolbar from "@radix-ui/react-toolbar";
@@ -20,6 +23,7 @@ import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { PdfNavigationSidebar } from "./components/PdfNavigationSidebar";
 import { PdfViewer } from "./components/PdfViewer";
 import { TranslationPane } from "./components/TranslationPane";
+import { UpdateActionButton } from "./components/UpdateActionButton";
 import { DocumentStatusSurface } from "./components/document/DocumentStatusSurface";
 import { EpubNavigationSidebar } from "./components/document/EpubNavigationSidebar";
 import { EpubViewer, type EpubParagraph, type EpubViewerHandle } from "./components/document/EpubViewer";
@@ -29,6 +33,7 @@ import { PageNavigationToolbar } from "./components/reader/PageNavigationToolbar
 import { PanelToggleGroup } from "./components/reader/PanelToggleGroup";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { ThemeToggleButton } from "./components/ThemeToggleButton";
+import { ToastProvider, useToast } from "./components/toast/ToastProvider";
 import { HomeView } from "./views/HomeView";
 import {
   createDefaultSettings,
@@ -82,6 +87,7 @@ import {
 import { getPdfJsWorkerPort } from "./lib/pdfWorker";
 import { buildPageTranslationPayload, hasUsablePageText } from "./lib/pageText";
 import { clampPage, getPagesToTranslate } from "./lib/pageQueue";
+import { READANI_RELEASES_URL } from "./lib/release";
 import {
   bumpRequestVersion,
   dequeueNextPage,
@@ -120,7 +126,42 @@ const PDF_KEYBOARD_ZOOM_STEP = 0.05;
 type AppView = "home" | "reader";
 const APP_WINDOW_TITLE = "readani";
 
+type UpdateCheckSource = "automatic" | "manual";
+
+type UpdateState =
+  | { phase: "idle" }
+  | { phase: "checking" }
+  | { phase: "downloading"; version: string }
+  | { phase: "ready"; version: string }
+  | { phase: "installing"; version: string }
+  | { phase: "error"; message: string };
+
+function getUpdateErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
+}
+
 export default function App() {
+  return (
+    <ToastProvider>
+      <AppContent />
+    </ToastProvider>
+  );
+}
+
+function AppContent() {
+  const { showToast } = useToast();
   const [pdfNavPrefs] = useState(() => loadPdfNavigationPrefs());
   const [appView, setAppView] = useState<AppView>("home");
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
@@ -181,6 +222,7 @@ export default function App() {
   const [isTranslateAllRunning, setIsTranslateAllRunning] = useState(false);
   const [activeColumnResizeKey, setActiveColumnResizeKey] = useState<string | null>(null);
   const [activeRailResizeKey, setActiveRailResizeKey] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<UpdateState>({ phase: "idle" });
 
   const pagesRef = useRef<PageDoc[]>([]);
   const pageTranslationsRef = useRef<Record<number, PageTranslationState>>({});
@@ -204,6 +246,8 @@ export default function App() {
   const pdfOutlineRequestIdRef = useRef(0);
   const pdfLoadRequestIdRef = useRef(0);
   const epubScrollRequestIdRef = useRef(0);
+  const autoUpdateCheckStartedRef = useRef(false);
+  const pendingUpdateRef = useRef<Update | null>(null);
   const readerShellRef = useRef<HTMLDivElement | null>(null);
   const readerHeaderRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<ReaderColumnKey, HTMLElement | null>>({
@@ -281,6 +325,133 @@ export default function App() {
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  const clearPendingUpdate = useCallback(() => {
+    const currentUpdate = pendingUpdateRef.current;
+    pendingUpdateRef.current = null;
+
+    if (currentUpdate) {
+      void currentUpdate.close().catch(() => {
+        // Ignore updater resource cleanup failures.
+      });
+    }
+  }, []);
+
+  const storePendingUpdate = useCallback((update: Update) => {
+    const previousUpdate = pendingUpdateRef.current;
+    pendingUpdateRef.current = update;
+
+    if (previousUpdate && previousUpdate !== update) {
+      void previousUpdate.close().catch(() => {
+        // Ignore updater resource cleanup failures.
+      });
+    }
+  }, []);
+
+  const handleCheckForUpdates = useCallback(
+    async (source: UpdateCheckSource) => {
+      if (updateState.phase === "checking") {
+        return;
+      }
+
+      if (updateState.phase === "downloading") {
+        if (source === "manual") {
+          showToast({ message: "Update is already downloading." });
+        }
+        return;
+      }
+
+      if (updateState.phase === "ready") {
+        if (source === "manual") {
+          showToast({ message: "Update is ready to install.", tone: "success" });
+        }
+        return;
+      }
+
+      if (updateState.phase === "installing") {
+        return;
+      }
+
+      setUpdateState({ phase: "checking" });
+
+      try {
+        const update = await check();
+
+        if (!update) {
+          clearPendingUpdate();
+          setUpdateState({ phase: "idle" });
+
+          if (source === "manual") {
+            showToast({ message: "You're running the latest version.", tone: "success" });
+          }
+          return;
+        }
+
+        storePendingUpdate(update);
+        setUpdateState({ phase: "downloading", version: update.version });
+        showToast({ message: "Found an update. Downloading now." });
+        await update.download();
+        setUpdateState({ phase: "ready", version: update.version });
+      } catch (error) {
+        clearPendingUpdate();
+        const message = getUpdateErrorMessage(error);
+        setUpdateState({ phase: "error", message });
+
+        if (source === "manual") {
+          showToast({ message: `Update failed: ${message}`, tone: "error", durationMs: 5200 });
+        } else {
+          console.error("Background updater failed:", error);
+        }
+      }
+    },
+    [clearPendingUpdate, showToast, storePendingUpdate, updateState.phase]
+  );
+
+  const handleInstallUpdate = useCallback(async () => {
+    const update = pendingUpdateRef.current;
+
+    if (!update || updateState.phase !== "ready") {
+      return;
+    }
+
+    setUpdateState({ phase: "installing", version: update.version });
+
+    try {
+      await update.install();
+      await relaunch();
+    } catch (error) {
+      const message = getUpdateErrorMessage(error);
+      setUpdateState({ phase: "ready", version: update.version });
+      showToast({ message: `Update failed: ${message}`, tone: "error", durationMs: 5200 });
+    }
+  }, [showToast, updateState.phase]);
+
+  const handleOpenLatestRelease = useCallback(async () => {
+    try {
+      await openUrl(READANI_RELEASES_URL);
+    } catch (error) {
+      showToast({
+        message: `Update failed: ${getUpdateErrorMessage(error)}`,
+        tone: "error",
+        durationMs: 5200,
+      });
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (autoUpdateCheckStartedRef.current) {
+      return;
+    }
+
+    autoUpdateCheckStartedRef.current = true;
+    void handleCheckForUpdates("automatic");
+  }, [handleCheckForUpdates]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingUpdate();
+    };
+  }, [clearPendingUpdate]);
 
   const releasePdfDocument = useCallback((doc: PDFDocumentProxy | null) => {
     if (!doc) {
@@ -368,6 +539,25 @@ export default function App() {
     () => getFullBookActionLabel(translationProgress),
     [translationProgress]
   );
+
+  const showReadyUpdateAction = updateState.phase === "ready";
+
+  const aboutUpdateStatusMessage = useMemo(() => {
+    switch (updateState.phase) {
+      case "checking":
+        return "Checking for updates.";
+      case "downloading":
+        return `Downloading v${updateState.version} in the background.`;
+      case "ready":
+        return `Update v${updateState.version} is ready. Use Update in the toolbar.`;
+      case "installing":
+        return `Installing v${updateState.version}.`;
+      case "error":
+        return `Last update error: ${updateState.message}`;
+      default:
+        return null;
+    }
+  }, [updateState]);
 
   const currentPdfPagePayload = useMemo(() => {
     if (currentFileType !== "pdf" || pages.length === 0) {
@@ -2740,7 +2930,19 @@ export default function App() {
       saveDisabled={presetSaving || hasInvalidPreset}
     />
   );
-  const sharedAboutDialog = <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />;
+  const sharedAboutDialog = (
+    <AboutDialog
+      onCheckForUpdates={() => {
+        void handleCheckForUpdates("manual");
+      }}
+      onOpenChange={setAboutOpen}
+      onOpenLatestRelease={() => {
+        void handleOpenLatestRelease();
+      }}
+      open={aboutOpen}
+      updateStatusMessage={aboutUpdateStatusMessage}
+    />
+  );
 
   const nextColumnAfterNavigation = visibleReaderColumns.includes("navigation")
     ? visibleReaderColumns.find((column) => column !== "navigation") ?? null
@@ -2763,7 +2965,11 @@ export default function App() {
       onOpenBook={handleOpenBook}
       onOpenFile={handleOpenFile}
       onOpenAbout={() => setAboutOpen(true)}
+      onInstallUpdate={() => {
+        void handleInstallUpdate();
+      }}
       onOpenSettings={() => setSettingsOpen(true)}
+      showUpdateAction={showReadyUpdateAction}
       theme={settings.theme}
       onThemeToggle={handleThemeToggle}
     />
@@ -2789,6 +2995,13 @@ export default function App() {
           <PanelToggleGroup panels={readerPanels} onToggle={togglePanel} />
         </div>
         <div className="header-right">
+          {showReadyUpdateAction ? (
+            <UpdateActionButton
+              onClick={() => {
+                void handleInstallUpdate();
+              }}
+            />
+          ) : null}
           <ThemeToggleButton
             className=""
             theme={settings.theme}

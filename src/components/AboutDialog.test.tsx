@@ -31,4 +31,13 @@ describe("AboutDialog", () => {
     expect(aboutDialogSource).toContain("READANI_UPSTREAM_AUTHOR_URL");
     expect(aboutDialogSource).toContain("READANI_UPSTREAM_REPO_URL");
   });
+
+  test("offers update actions in the footer with a built-in check and manual release fallback", () => {
+    expect(aboutDialogSource).toContain("onCheckForUpdates");
+    expect(aboutDialogSource).toContain("onOpenLatestRelease");
+    expect(aboutDialogSource).toContain('className="about-dialog-actions"');
+    expect(aboutDialogSource).toContain("Check for update");
+    expect(aboutDialogSource).toContain("Open latest release");
+    expect(releaseSource).toContain("READANI_RELEASES_URL");
+  });
 });

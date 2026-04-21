@@ -7,6 +7,7 @@ export const READANI_UPSTREAM_AUTHOR_NAME = "Everett (everettjf)";
 export const READANI_UPSTREAM_AUTHOR_URL = "https://github.com/everettjf";
 export const READANI_UPSTREAM_REPO_NAME = "PDFRead";
 export const READANI_UPSTREAM_REPO_URL = "https://github.com/everettjf/PDFRead";
+export const READANI_RELEASES_URL = "https://github.com/galza-guo/readani/releases/latest";
 
 function formatBuildTimestamp(timestamp: string): string {
   const parsedTimestamp = new Date(timestamp);

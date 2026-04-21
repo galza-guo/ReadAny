@@ -4,6 +4,7 @@ import * as ScrollArea from "@radix-ui/react-scroll-area";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { ExpandableIconButton } from "../components/reader/ExpandableIconButton";
 import { ThemeToggleButton } from "../components/ThemeToggleButton";
+import { UpdateActionButton } from "../components/UpdateActionButton";
 import type { RecentBook, ThemeMode } from "../types";
 import readaniBannerForDarkTheme from "../assets/readani-banner-dark-theme.png";
 import readaniBannerForLightTheme from "../assets/readani-banner-light-theme.png";
@@ -15,6 +16,8 @@ type HomeViewProps = {
   onOpenSettings: () => void;
   theme: ThemeMode;
   onThemeToggle: () => void;
+  showUpdateAction?: boolean;
+  onInstallUpdate?: () => void;
 };
 
 function AboutIcon() {
@@ -98,6 +101,8 @@ export function HomeView({
   onOpenSettings,
   theme,
   onThemeToggle,
+  showUpdateAction = false,
+  onInstallUpdate,
 }: HomeViewProps) {
   const [books, setBooks] = useState<RecentBook[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,6 +150,9 @@ export function HomeView({
     <div className="home">
       <header className="home-header">
         <div className="home-header-actions">
+          {showUpdateAction && onInstallUpdate ? (
+            <UpdateActionButton onClick={onInstallUpdate} />
+          ) : null}
           <ThemeToggleButton
             theme={theme}
             onToggle={onThemeToggle}

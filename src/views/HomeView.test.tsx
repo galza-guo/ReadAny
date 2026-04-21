@@ -96,6 +96,9 @@ describe("HomeView layout", () => {
     expect(homeViewSource).toContain("showHoverLabel={true}");
     expect(homeViewSource).toContain('labelDirection="left"');
     expect(homeViewSource).toContain("ExpandableIconButton");
+    expect(homeViewSource).toContain("UpdateActionButton");
+    expect(homeViewSource).toContain("showUpdateAction");
+    expect(homeViewSource).toContain("onInstallUpdate");
     expect(homeViewSource).toContain('label="About"');
     expect(homeViewSource).toContain("onOpenAbout");
     expect(homeViewSource).toContain("onClick={onOpenAbout}");

@@ -12,11 +12,15 @@ env:
   APP_NAME: readani
   APPLE_SIGNING_IDENTITY: "Developer ID Application: Lite Guo (T96QFDVD9V)"
   APPLE_TEAM_ID: T96QFDVD9V
+  RELEASE_BASE_URL: https://github.com/galza-guo/readani/releases/download
 
 jobs:
   build-windows:
     name: Build Windows MSI
     runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Check out repository
@@ -39,6 +43,15 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify updater signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY secret required for updater artifacts." >&2
+            exit 1
+          fi
+
       - name: Build MSI
         run: bun run tauri build --bundles msi
 
@@ -53,6 +66,12 @@ jobs:
             exit 1
           fi
           cp "$MSI_PATH" release-artifacts/
+          SIG_PATH="${MSI_PATH}.sig"
+          if [[ -z "${SIG_PATH:-}" || ! -f "$SIG_PATH" ]]; then
+            echo "Could not find the generated MSI signature." >&2
+            exit 1
+          fi
+          cp "$SIG_PATH" release-artifacts/
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
@@ -67,6 +86,8 @@ jobs:
     env:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Check out repository
@@ -91,6 +112,15 @@ jobs:
       - name: Import Apple signing certificate
         shell: bash
         run: ./scripts/import_apple_certificate.sh
+
+      - name: Verify updater signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY secret required for updater artifacts." >&2
+            exit 1
+          fi
 
       - name: Build signed DMG
         shell: bash
@@ -129,7 +159,14 @@ jobs:
             exit 1
           fi
 
-          ./scripts/notarize_dmg.sh "$DMG_PATH"
+          APP_PATH=$(find src-tauri/target -path '*/bundle/macos/*.app' -type d | sort | tail -n 1)
+
+          if [[ -z "${APP_PATH:-}" || ! -d "$APP_PATH" ]]; then
+            echo "Could not find the generated app bundle." >&2
+            exit 1
+          fi
+
+          ./scripts/notarize_dmg.sh "$DMG_PATH" "$APP_PATH"
 
       - name: Collect DMG artifact
         shell: bash
@@ -142,6 +179,18 @@ jobs:
             exit 1
           fi
           cp "$DMG_PATH" release-artifacts/
+          APP_ARCHIVE_PATH=$(find src-tauri/target -path '*/bundle/macos/*.app.tar.gz' -type f | sort | tail -n 1)
+          if [[ -z "${APP_ARCHIVE_PATH:-}" || ! -f "$APP_ARCHIVE_PATH" ]]; then
+            echo "Could not find the generated updater app archive." >&2
+            exit 1
+          fi
+          cp "$APP_ARCHIVE_PATH" release-artifacts/
+          APP_ARCHIVE_SIG_PATH="${APP_ARCHIVE_PATH}.sig"
+          if [[ -z "${APP_ARCHIVE_SIG_PATH:-}" || ! -f "$APP_ARCHIVE_SIG_PATH" ]]; then
+            echo "Could not find the generated updater app archive signature." >&2
+            exit 1
+          fi
+          cp "$APP_ARCHIVE_SIG_PATH" release-artifacts/
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -158,6 +207,9 @@ jobs:
       - build-macos
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -170,3 +222,42 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           name: readani ${{ github.ref_name }}
+
+      - name: Read release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "${GITHUB_REF_NAME}" --json body,publishedAt > release-metadata.json
+          jq -r '.body // ""' release-metadata.json > release-notes.txt
+
+      - name: Generate updater manifest
+        run: |
+          set -euo pipefail
+          WINDOWS_MSI=$(find release-artifacts -name '*.msi' -type f | sort | tail -n 1)
+          WINDOWS_SIG=$(find release-artifacts -name '*.msi.sig' -type f | sort | tail -n 1)
+          MACOS_ARCHIVE=$(find release-artifacts -name '*.app.tar.gz' -type f | sort | tail -n 1)
+          MACOS_SIG=$(find release-artifacts -name '*.app.tar.gz.sig' -type f | sort | tail -n 1)
+
+          if [[ -z "${WINDOWS_MSI:-}" || -z "${WINDOWS_SIG:-}" || -z "${MACOS_ARCHIVE:-}" || -z "${MACOS_SIG:-}" ]]; then
+            echo "Missing updater artifacts required to generate latest.json." >&2
+            exit 1
+          fi
+
+          python3 scripts/generate_latest_json.py \
+            --version "${GITHUB_REF_NAME}" \
+            --pub-date "$(jq -r '.publishedAt' release-metadata.json)" \
+            --notes-file release-notes.txt \
+            --base-url "${RELEASE_BASE_URL}/${GITHUB_REF_NAME}" \
+            --windows-artifact "${WINDOWS_MSI}" \
+            --windows-signature "${WINDOWS_SIG}" \
+            --macos-artifact "${MACOS_ARCHIVE}" \
+            --macos-signature "${MACOS_SIG}" \
+            --output latest.json
+
+      - name: Upload updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" latest.json --clobber

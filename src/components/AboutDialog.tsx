@@ -5,6 +5,7 @@ import {
   READANI_BUILD_TIMESTAMP_LABEL,
   READANI_COPYRIGHT_LINE,
   READANI_PRODUCT_NAME,
+  READANI_RELEASES_URL,
   READANI_UPSTREAM_AUTHOR_NAME,
   READANI_UPSTREAM_AUTHOR_URL,
   READANI_UPSTREAM_REPO_NAME,
@@ -15,9 +16,18 @@ import {
 type AboutDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCheckForUpdates: () => void;
+  onOpenLatestRelease: () => void;
+  updateStatusMessage?: string | null;
 };
 
-export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
+export function AboutDialog({
+  open,
+  onOpenChange,
+  onCheckForUpdates,
+  onOpenLatestRelease,
+  updateStatusMessage,
+}: AboutDialogProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -88,6 +98,26 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             </div>
 
             <p className="about-dialog-copyright">{READANI_COPYRIGHT_LINE}</p>
+
+            {updateStatusMessage ? (
+              <p className="about-dialog-update-status" role="status">
+                {updateStatusMessage}
+              </p>
+            ) : null}
+
+            <div className="about-dialog-actions">
+              <button className="btn btn-primary" onClick={onCheckForUpdates} type="button">
+                Check for update
+              </button>
+              <button
+                className="btn"
+                onClick={onOpenLatestRelease}
+                title={READANI_RELEASES_URL}
+                type="button"
+              >
+                Open latest release
+              </button>
+            </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
