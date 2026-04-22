@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   READANI_AUTHOR_EMAIL,
@@ -11,7 +12,9 @@ import {
   READANI_UPSTREAM_REPO_NAME,
   READANI_UPSTREAM_REPO_URL,
   READANI_VERSION,
+  getReadaniRuntimeVersion,
 } from "../lib/release";
+import { ChangelogDialog } from "./ChangelogDialog";
 
 type AboutDialogProps = {
   open: boolean;
@@ -28,6 +31,29 @@ export function AboutDialog({
   onOpenLatestRelease,
   updateStatusMessage,
 }: AboutDialogProps) {
+  const [appVersion, setAppVersion] = useState(READANI_VERSION);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void getReadaniRuntimeVersion().then((version) => {
+      if (!cancelled) {
+        setAppVersion(version);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setChangelogOpen(false);
+    }
+  }, [open]);
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -39,7 +65,7 @@ export function AboutDialog({
                 {READANI_PRODUCT_NAME}
               </Dialog.Title>
               <Dialog.Description className="about-dialog-description">
-                Bilingual PDF and EPUB reading for desktop.
+                Immersive PDF and EPUB reading for desktop.
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -65,14 +91,41 @@ export function AboutDialog({
 
           <div className="about-dialog-body">
             <div className="about-dialog-metadata">
-              <p className="about-dialog-metadata-item">Version v{READANI_VERSION}</p>
-              <p className="about-dialog-metadata-item">Built {READANI_BUILD_TIMESTAMP_LABEL}</p>
-              <p className="about-dialog-metadata-item">Created by {READANI_AUTHOR_NAME}</p>
               <p className="about-dialog-metadata-item">
-                Contact{" "}
-                <a className="about-dialog-link" href={`mailto:${READANI_AUTHOR_EMAIL}`}>
-                  {READANI_AUTHOR_EMAIL}
-                </a>
+                <span className="about-dialog-metadata-inline">
+                  <span>Version v{appVersion}</span>
+                  <button
+                    className="about-dialog-link-button"
+                    onClick={() => setChangelogOpen(true)}
+                    type="button"
+                  >
+                    CHANGELOG
+                  </button>
+                </span>
+              </p>
+              <p className="about-dialog-metadata-item">{READANI_BUILD_TIMESTAMP_LABEL}</p>
+              <p className="about-dialog-metadata-item">
+                <span className="about-dialog-metadata-inline">
+                  <span>{READANI_AUTHOR_NAME}</span>
+                  <a
+                    aria-label={`Email ${READANI_AUTHOR_NAME}`}
+                    className="about-dialog-icon-link"
+                    href={`mailto:${READANI_AUTHOR_EMAIL}`}
+                    title={READANI_AUTHOR_EMAIL}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                    >
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <path d="m4 7 8 6 8-6" />
+                    </svg>
+                  </a>
+                </span>
               </p>
               <p className="about-dialog-metadata-item">
                 Special thanks to{" "}
@@ -121,6 +174,7 @@ export function AboutDialog({
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
     </Dialog.Root>
   );
 }

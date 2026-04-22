@@ -2271,6 +2271,20 @@ body.is-resizing-split-y * {
   overflow: hidden;
 }
 
+.dialog-overlay-changelog {
+  z-index: 1002;
+}
+
+.dialog-content-changelog {
+  width: min(720px, 94vw);
+  height: min(640px, 88vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0;
+  overflow: hidden;
+  z-index: 1003;
+}
+
 .settings-dialog-header {
   display: flex;
   align-items: center;
@@ -3401,13 +3415,56 @@ body.is-resizing-split-y * {
   word-break: break-word;
 }
 
+.about-dialog-metadata-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .about-dialog-link {
   color: var(--accent);
   text-decoration: none;
 }
 
+.about-dialog-link-button {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+}
+
+.about-dialog-link-button:hover,
+.about-dialog-link-button:focus-visible,
 .about-dialog-link:hover {
   text-decoration: underline;
+}
+
+.about-dialog-icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--ink-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.about-dialog-icon-link:hover,
+.about-dialog-icon-link:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--panel);
 }
 
 .about-dialog-copyright {
@@ -3426,15 +3483,151 @@ body.is-resizing-split-y * {
 
 .about-dialog-actions {
   display: flex;
+  justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
   padding-top: 4px;
 }
 
+.changelog-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 4px;
+}
+
+.changelog-dialog-hero-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.changelog-dialog-hero-copy .dialog-title {
+  margin-bottom: 4px;
+}
+
+.changelog-dialog-description {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--type-size-body);
+  line-height: var(--type-line-height-ui);
+}
+
+.changelog-dialog-close {
+  flex-shrink: 0;
+}
+
+.changelog-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 24px;
+}
+
+.changelog-dialog-intro {
+  margin: 0 0 24px;
+  color: var(--ink-muted);
+  line-height: 1.65;
+}
+
+.changelog-release-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.changelog-release + .changelog-release {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.changelog-release-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+}
+
+.changelog-release-title {
+  margin: 0;
+  font-size: var(--type-size-title);
+  font-weight: var(--type-weight-semibold);
+  line-height: 1.2;
+}
+
+.changelog-release-date {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--type-size-meta);
+  line-height: 1.4;
+}
+
+.changelog-release-intro {
+  margin: 12px 0 0;
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.changelog-section {
+  margin-top: 20px;
+}
+
+.changelog-section-title {
+  margin: 0 0 10px;
+  font-size: var(--type-size-label);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.changelog-section-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changelog-section-item {
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.changelog-dialog-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.changelog-dialog-link:hover,
+.changelog-dialog-link:focus-visible {
+  text-decoration: underline;
+}
+
+.changelog-inline-code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-muted);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+  font-size: 0.92em;
+}
+
 @media (max-width: 640px) {
+  .dialog-content-changelog,
   .dialog-content-about,
   .dialog-content-settings {
     width: min(640px, 96vw);
+  }
+
+  .dialog-content-changelog {
+    height: min(640px, 90vh);
   }
 
   .dialog-content-settings {
@@ -3483,7 +3676,8 @@ body.is-resizing-split-y * {
     padding: 16px 16px 4px;
   }
 
-  .about-dialog-body {
+  .about-dialog-body,
+  .changelog-dialog-body {
     padding: 16px;
   }
 
