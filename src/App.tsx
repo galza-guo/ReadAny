@@ -63,6 +63,11 @@ import { extractPageParagraphs } from "./lib/textExtraction";
 import { hashBuffer } from "./lib/hash";
 import { LRUCache } from "./lib/lruCache";
 import {
+  buildPdfPageTranslatedText,
+  getTranslatablePdfParagraphs,
+  isPdfPageFullyTranslated,
+} from "./lib/pdfSegments";
+import {
   normalizePdfOutline,
   resolvePdfDestinationPage,
   type PdfNavTab,
@@ -123,7 +128,6 @@ import type {
   BatchTranslationResult,
   FileType,
   PageDoc,
-  PageTranslationResult,
   PageTranslationState,
   PresetSaveStatus,
   PresetTestResult,
@@ -890,8 +894,7 @@ function AppContent() {
 
   const translationProgressLabel = useMemo(() => {
     if (
-      (currentFileType === "pdf" &&
-        (!allPdfPagesExtracted || !cachedPageTranslationsReady)) ||
+      (currentFileType === "pdf" && !allPdfPagesExtracted) ||
       translationProgress.totalCount === 0
     ) {
       return null;
@@ -1454,7 +1457,6 @@ function AppContent() {
     ) &&
     currentPdfTranslation?.status !== "done" &&
     currentPdfTranslation?.status !== "unavailable" &&
-    !cachedPageTranslations.includes(currentPage) &&
     (currentPdfTranslation?.status === "setup-required" ||
       !activePresetHasTranslationContext);
   const currentPdfLoadingMessage = useMemo(
