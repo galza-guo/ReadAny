@@ -22,11 +22,12 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={true}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
     expect(html).toContain("page-translation-cached-indicator");
@@ -51,17 +52,44 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={true}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
     expect(html).toContain("translation-pane-progress-text");
     expect(html).not.toContain("translation-progress-indicator");
     expect(html).toContain('class="btn btn-small btn-quiet-action"');
     expect(html).not.toContain("btn-primary btn-small");
+  });
+
+  test("renders a running progress detail beside the page count", () => {
+    const html = renderToStaticMarkup(
+      <TranslationPane
+        mode="pdf"
+        currentPage={3}
+        progressLabel="3/9 pages translated"
+        progressDetailLabel="Translating page 4"
+        progressDetailState="running"
+        bulkActionLabel="Stop Translating All"
+        onBulkAction={() => {}}
+        bulkActionDisabled={false}
+        bulkActionRunning={true}
+        onOpenSettings={() => {}}
+        onRetryPage={() => {}}
+        canRetryPage={true}
+        selectionTranslation={null}
+        onClearSelectionTranslation={() => {}}
+      />,
+    );
+
+    expect(html).toContain("translation-pane-progress-detail is-running");
+    expect(html).toContain("Translating page 4");
+    expect(html).toContain("translation-pane-progress-ellipsis");
+    expect(html).toContain(">Stop Translating All<");
   });
 
   test("renders loading state without the old boxed wrapper", () => {
@@ -76,20 +104,46 @@ describe("TranslationPane", () => {
           nextContext: "",
           status: "loading",
         }}
+        loadingMessage="Translating this page..."
         bulkActionLabel="Translate All"
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={true}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
     expect(html).toContain("page-translation-loading-state");
     expect(html).toContain("page-translation-loading-text");
-    expect(html).not.toContain("page-translation-loading\"");
+    expect(html).toContain("Translating this page...");
+    expect(html).not.toContain('page-translation-loading"');
+  });
+
+  test("renders a neutral placeholder instead of a fake loading state when nothing is running", () => {
+    const html = renderToStaticMarkup(
+      <TranslationPane
+        mode="pdf"
+        currentPage={3}
+        bulkActionLabel="Translate All"
+        onBulkAction={() => {}}
+        bulkActionDisabled={false}
+        bulkActionRunning={false}
+        onOpenSettings={() => {}}
+        onRetryPage={() => {}}
+        canRetryPage={true}
+        selectionTranslation={null}
+        onClearSelectionTranslation={() => {}}
+      />,
+    );
+
+    expect(html).toContain(
+      "Translation will appear here when this page is ready.",
+    );
+    expect(html).not.toContain("Translating this page...");
   });
 
   test("uses a generic translation title in PDF mode", () => {
@@ -109,11 +163,12 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={true}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
     expect(html).toContain(">Translation<");
@@ -132,6 +187,7 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         activePid={null}
         hoverPid={null}
         onHoverPid={() => {}}
@@ -141,7 +197,7 @@ describe("TranslationPane", () => {
         wordTranslation={null}
         onClearWordTranslation={() => {}}
         scrollToPage={null}
-      />
+      />,
     );
 
     expect(html).toContain(">Translation<");
@@ -151,7 +207,8 @@ describe("TranslationPane", () => {
   });
 
   test("uses the centered shared header rhythm without a translation-only divider", () => {
-    const railHeaderRule = appCss.match(/\.rail-pane-header\s*\{([^}]*)\}/)?.[1] ?? "";
+    const railHeaderRule =
+      appCss.match(/\.rail-pane-header\s*\{([^}]*)\}/)?.[1] ?? "";
     const translationHeaderRule =
       appCss.match(/\.translation-pane-header\s*\{([^}]*)\}/)?.[1] ?? "";
 
@@ -176,11 +233,12 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={true}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
     expect(html).not.toContain('aria-label="Open vocabulary"');
@@ -196,6 +254,7 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         activePid={null}
         hoverPid={null}
         onHoverPid={() => {}}
@@ -205,7 +264,7 @@ describe("TranslationPane", () => {
         wordTranslation={null}
         onClearWordTranslation={() => {}}
         scrollToPage={null}
-      />
+      />,
     );
 
     expect(html).not.toContain('aria-label="Open vocabulary"');
@@ -228,11 +287,12 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={true}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
     expect(html).toContain('class="btn btn-ghost expandable-icon-button"');
@@ -257,14 +317,16 @@ describe("TranslationPane", () => {
         onBulkAction={() => {}}
         bulkActionDisabled={false}
         bulkActionRunning={false}
+        onOpenSettings={() => {}}
         onRetryPage={() => {}}
         canRetryPage={false}
         selectionTranslation={null}
         onClearSelectionTranslation={() => {}}
-      />
+      />,
     );
 
-    const emptyRule = appCss.match(/\.page-translation-empty\s*\{([^}]*)\}/)?.[1] ?? "";
+    const emptyRule =
+      appCss.match(/\.page-translation-empty\s*\{([^}]*)\}/)?.[1] ?? "";
     const brandRule =
       appCss.match(/\.page-translation-empty-brand\s*\{([^}]*)\}/)?.[1] ?? "";
 
@@ -275,5 +337,78 @@ describe("TranslationPane", () => {
     expect(emptyRule).toContain("font-style: italic");
     expect(emptyRule).not.toContain("border:");
     expect(brandRule).toContain("font-style: normal");
+  });
+
+  test("renders a settings call-to-action when translation setup is required", () => {
+    const html = renderToStaticMarkup(
+      <TranslationPane
+        mode="pdf"
+        currentPage={3}
+        pageTranslation={{
+          page: 3,
+          displayText: "Original text",
+          previousContext: "",
+          nextContext: "",
+          status: "setup-required",
+          error: "Translation is not set up yet.",
+        }}
+        setupRequired={true}
+        bulkActionLabel="Translate All"
+        onBulkAction={() => {}}
+        bulkActionDisabled={false}
+        bulkActionRunning={false}
+        onOpenSettings={() => {}}
+        onRetryPage={() => {}}
+        canRetryPage={false}
+        selectionTranslation={null}
+        onClearSelectionTranslation={() => {}}
+      />,
+    );
+
+    expect(html).toContain("translation-setup-prompt");
+    expect(html).toContain("Translation is not set up yet.");
+    expect(html).toContain("Open Settings to add a provider.");
+  });
+
+  test("keeps the page error state inline without a framed box", () => {
+    const html = renderToStaticMarkup(
+      <TranslationPane
+        mode="pdf"
+        currentPage={3}
+        pageTranslation={{
+          page: 3,
+          displayText: "Original text",
+          previousContext: "",
+          nextContext: "",
+          status: "error",
+          error: "Could not reach the translation service.",
+          errorChecks: [
+            "Check your network connection.",
+            "Check the Base URL in Settings.",
+          ],
+        }}
+        bulkActionLabel="Translate All"
+        onBulkAction={() => {}}
+        bulkActionDisabled={false}
+        bulkActionRunning={false}
+        onOpenSettings={() => {}}
+        onRetryPage={() => {}}
+        canRetryPage={true}
+        selectionTranslation={null}
+        onClearSelectionTranslation={() => {}}
+      />,
+    );
+
+    const errorRule =
+      appCss.match(/(?:^|\n)\.page-translation-error\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(errorRule).toContain("justify-content: center");
+    expect(errorRule).toContain("text-align: center");
+    expect(errorRule).not.toContain("border:");
+    expect(errorRule).not.toContain("background:");
+    expect(errorRule).not.toContain("padding:");
+    expect(html).toContain("Could not reach the translation service.");
+    expect(html).toContain("Possible checks");
+    expect(html).toContain("Check your network connection.");
   });
 });

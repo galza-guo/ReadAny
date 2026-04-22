@@ -15,6 +15,8 @@ import type {
 type TranslationPaneChromeProps = {
   statusMessage?: string | null;
   progressLabel?: string | null;
+  progressDetailLabel?: string | null;
+  progressDetailState?: "running" | "stopping" | null;
   bulkActionLabel: string;
   onBulkAction: () => void;
   bulkActionDisabled: boolean;
@@ -25,12 +27,17 @@ type PdfTranslationPaneProps = {
   mode: "pdf";
   currentPage: number;
   pageTranslation?: PageTranslationState;
+  loadingMessage?: string | null;
+  setupRequired?: boolean;
   statusMessage?: string | null;
   progressLabel?: string | null;
+  progressDetailLabel?: string | null;
+  progressDetailState?: "running" | "stopping" | null;
   bulkActionLabel: string;
   onBulkAction: () => void;
   bulkActionDisabled: boolean;
   bulkActionRunning: boolean;
+  onOpenSettings: () => void;
   onRetryPage: (page: number) => void;
   canRetryPage: boolean;
   selectionTranslation: SelectionTranslation | null;
@@ -41,12 +48,16 @@ type EpubTranslationPaneProps = {
   mode: "epub";
   pages: PageDoc[];
   currentPage: number;
+  setupRequired?: boolean;
   statusMessage?: string | null;
   progressLabel?: string | null;
+  progressDetailLabel?: string | null;
+  progressDetailState?: "running" | "stopping" | null;
   bulkActionLabel: string;
   onBulkAction: () => void;
   bulkActionDisabled: boolean;
   bulkActionRunning: boolean;
+  onOpenSettings: () => void;
   activePid?: string | null;
   hoverPid?: string | null;
   onHoverPid: (pid: string | null) => void;
@@ -123,6 +134,25 @@ function RetryIcon() {
   );
 }
 
+function TranslationSetupPrompt({
+  onOpenSettings,
+}: {
+  onOpenSettings: () => void;
+}) {
+  return (
+    <div className="translation-setup-prompt">
+      <p className="translation-setup-title">Translation is not set up yet.</p>
+      <button
+        className="btn btn-quiet-action"
+        onClick={onOpenSettings}
+        type="button"
+      >
+        Open Settings to add a provider.
+      </button>
+    </div>
+  );
+}
+
 const ParagraphBlock = memo(function ParagraphBlock({
   para,
   pageNum,
@@ -145,12 +175,16 @@ const ParagraphBlock = memo(function ParagraphBlock({
       const selection = window.getSelection();
       const selectedText = selection?.toString().trim();
 
-      if (selectedText && selectedText.length > 0 && selectedText.length < 200) {
+      if (
+        selectedText &&
+        selectedText.length > 0 &&
+        selectedText.length < 200
+      ) {
         event.stopPropagation();
         onTranslateText(selectedText, { x: event.clientX, y: event.clientY });
       }
     },
-    [onTranslateText]
+    [onTranslateText],
   );
 
   const translationText =
@@ -253,6 +287,8 @@ const EpubPageTranslation = memo(function EpubPageTranslation({
 
 function TranslationPaneFooter({
   progressLabel,
+  progressDetailLabel,
+  progressDetailState,
   bulkActionLabel,
   onBulkAction,
   bulkActionDisabled,
@@ -268,6 +304,32 @@ function TranslationPaneFooter({
             }`}
           >
             {progressLabel}
+          </span>
+        ) : null}
+        {progressLabel && progressDetailLabel ? (
+          <span
+            className="translation-pane-progress-separator"
+            aria-hidden="true"
+          >
+            ·
+          </span>
+        ) : null}
+        {progressDetailLabel ? (
+          <span
+            className={`translation-pane-progress-detail ${
+              progressDetailState
+                ? `is-${progressDetailState}`
+                : ""
+            }`}
+            aria-live="polite"
+          >
+            <span>{progressDetailLabel}</span>
+            {progressDetailState ? (
+              <span
+                className="translation-pane-progress-ellipsis"
+                aria-hidden="true"
+              />
+            ) : null}
           </span>
         ) : null}
       </div>
@@ -286,18 +348,31 @@ function TranslationPaneFooter({
 function PdfTranslationPane({
   currentPage,
   pageTranslation,
+  loadingMessage,
+  setupRequired = false,
   statusMessage,
   progressLabel,
+  progressDetailLabel,
+  progressDetailState,
   bulkActionLabel,
   onBulkAction,
   bulkActionDisabled,
   bulkActionRunning,
+  onOpenSettings,
   onRetryPage,
   canRetryPage,
   selectionTranslation,
   onClearSelectionTranslation,
 }: Omit<PdfTranslationPaneProps, "mode">) {
   const [revealedText, setRevealedText] = useState("");
+  const resolvedLoadingMessage =
+    loadingMessage ??
+    pageTranslation?.activityMessage ??
+    (pageTranslation?.status === "queued"
+      ? "Queued for translation..."
+      : pageTranslation?.status === "loading"
+        ? "Translating this page..."
+        : null);
 
   useEffect(() => {
     const fullText = pageTranslation?.translatedText ?? "";
@@ -360,7 +435,10 @@ function PdfTranslationPane({
             ) : null}
           </div>
           {statusMessage ? (
-            <div className="translation-pane-status rail-pane-meta" aria-live="polite">
+            <div
+              className="translation-pane-status rail-pane-meta"
+              aria-live="polite"
+            >
               {statusMessage}
             </div>
           ) : null}
@@ -382,28 +460,56 @@ function PdfTranslationPane({
         <div className="page-translation-shell">
           {pageTranslation?.status === "unavailable" ? (
             <div className="page-translation-empty">
-              This page does not contain any usable text yet. Please OCR it first, then
-              reopen it in <span className="page-translation-empty-brand">readani</span>.
+              This page does not contain any usable text yet. Please OCR it
+              first, then reopen it in{" "}
+              <span className="page-translation-empty-brand">readani</span>.
             </div>
+          ) : pageTranslation?.status === "setup-required" || setupRequired ? (
+            <TranslationSetupPrompt onOpenSettings={onOpenSettings} />
           ) : pageTranslation?.status === "error" ? (
             <div className="page-translation-error">
-              <p>{pageTranslation.error || "Translation failed for this page."}</p>
-              <button className="btn btn-primary" onClick={() => onRetryPage(currentPage)}>
+              <p>
+                {pageTranslation.error || "Translation failed for this page."}
+              </p>
+              {pageTranslation.errorChecks?.length ? (
+                <div className="page-translation-error-checks-wrap">
+                  <div className="page-translation-error-checks-label">
+                    Possible checks
+                  </div>
+                  <ul className="page-translation-error-checks">
+                    {pageTranslation.errorChecks.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <button
+                className="btn btn-primary"
+                onClick={() => onRetryPage(currentPage)}
+              >
                 Retry page
               </button>
             </div>
           ) : pageTranslation?.status === "done" ? (
             <div className="page-translation-content">{revealedText}</div>
-          ) : (
+          ) : resolvedLoadingMessage ? (
             <div className="page-translation-loading-state">
               <div className="page-translation-spinner" />
-              <p className="page-translation-loading-text">Translating this page...</p>
+              <p className="page-translation-loading-text">
+                {resolvedLoadingMessage}
+              </p>
+            </div>
+          ) : (
+            <div className="page-translation-empty">
+              Translation will appear here when this page is ready.
             </div>
           )}
         </div>
       </div>
       <TranslationPaneFooter
         progressLabel={progressLabel}
+        progressDetailLabel={progressDetailLabel}
+        progressDetailState={progressDetailState}
         bulkActionLabel={bulkActionLabel}
         onBulkAction={onBulkAction}
         bulkActionDisabled={bulkActionDisabled}
@@ -411,7 +517,10 @@ function PdfTranslationPane({
       />
 
       {selectionTranslation ? (
-        <Popover.Root open={true} onOpenChange={(open) => !open && onClearSelectionTranslation()}>
+        <Popover.Root
+          open={true}
+          onOpenChange={(open) => !open && onClearSelectionTranslation()}
+        >
           <Popover.Anchor
             style={{
               position: "fixed",
@@ -426,12 +535,16 @@ function PdfTranslationPane({
               onPointerDownOutside={onClearSelectionTranslation}
               onEscapeKeyDown={onClearSelectionTranslation}
             >
-              <div className="selection-popover-source">{selectionTranslation.text}</div>
+              <div className="selection-popover-source">
+                {selectionTranslation.text}
+              </div>
               <div className="selection-popover-divider" />
               {selectionTranslation.isLoading ? (
                 <div className="selection-popover-loading">Translating...</div>
               ) : selectionTranslation.error ? (
-                <div className="selection-popover-error">{selectionTranslation.error}</div>
+                <div className="selection-popover-error">
+                  {selectionTranslation.error}
+                </div>
               ) : (
                 <div className="selection-popover-translation">
                   {selectionTranslation.translation}
@@ -449,12 +562,16 @@ function PdfTranslationPane({
 function EpubTranslationPane({
   pages,
   currentPage: _currentPage,
+  setupRequired = false,
   statusMessage,
   progressLabel,
+  progressDetailLabel,
+  progressDetailState,
   bulkActionLabel,
   onBulkAction,
   bulkActionDisabled,
   bulkActionRunning,
+  onOpenSettings,
   activePid,
   hoverPid,
   onHoverPid,
@@ -473,10 +590,15 @@ function EpubTranslationPane({
       lastHandledScrollPageRef.current = null;
       return;
     }
-    if (lastHandledScrollPageRef.current === scrollToPage || pages.length === 0) return;
+    if (lastHandledScrollPageRef.current === scrollToPage || pages.length === 0)
+      return;
     const index = pages.findIndex((page) => page.page === scrollToPage);
     if (index >= 0) {
-      virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "smooth" });
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: "start",
+        behavior: "smooth",
+      });
       lastHandledScrollPageRef.current = scrollToPage;
     }
   }, [pages, scrollToPage]);
@@ -489,12 +611,18 @@ function EpubTranslationPane({
             <span className="rail-pane-title">Translation</span>
           </div>
           {statusMessage ? (
-            <div className="translation-pane-status rail-pane-meta" aria-live="polite">
+            <div
+              className="translation-pane-status rail-pane-meta"
+              aria-live="polite"
+            >
               {statusMessage}
             </div>
           ) : null}
         </div>
       </div>
+      {setupRequired ? (
+        <TranslationSetupPrompt onOpenSettings={onOpenSettings} />
+      ) : null}
       <Virtuoso
         ref={virtuosoRef}
         style={{ flex: 1, minHeight: 0 }}
@@ -513,13 +641,18 @@ function EpubTranslationPane({
       />
       <TranslationPaneFooter
         progressLabel={progressLabel}
+        progressDetailLabel={progressDetailLabel}
+        progressDetailState={progressDetailState}
         bulkActionLabel={bulkActionLabel}
         onBulkAction={onBulkAction}
         bulkActionDisabled={bulkActionDisabled}
         bulkActionRunning={bulkActionRunning}
       />
       {wordTranslation ? (
-        <Popover.Root open={true} onOpenChange={(open) => !open && onClearWordTranslation()}>
+        <Popover.Root
+          open={true}
+          onOpenChange={(open) => !open && onClearWordTranslation()}
+        >
           <Popover.Anchor
             style={{
               position: "fixed",
@@ -540,7 +673,9 @@ function EpubTranslationPane({
               {wordTranslation.phonetic ? (
                 <div className="word-popover-phonetic">
                   <span className="phonetic-label">UK</span>
-                  <span className="phonetic-text">{wordTranslation.phonetic}</span>
+                  <span className="phonetic-text">
+                    {wordTranslation.phonetic}
+                  </span>
                 </div>
               ) : null}
               {wordTranslation.isLoading ? (
@@ -552,7 +687,9 @@ function EpubTranslationPane({
                       {definition.pos ? (
                         <span className="word-pos">{definition.pos}</span>
                       ) : null}
-                      <span className="word-meanings">{definition.meanings}</span>
+                      <span className="word-meanings">
+                        {definition.meanings}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -572,12 +709,17 @@ export function TranslationPane(props: TranslationPaneProps) {
       <PdfTranslationPane
         currentPage={props.currentPage}
         pageTranslation={props.pageTranslation}
+        loadingMessage={props.loadingMessage}
+        setupRequired={props.setupRequired}
         statusMessage={props.statusMessage}
         progressLabel={props.progressLabel}
+        progressDetailLabel={props.progressDetailLabel}
+        progressDetailState={props.progressDetailState}
         bulkActionLabel={props.bulkActionLabel}
         onBulkAction={props.onBulkAction}
         bulkActionDisabled={props.bulkActionDisabled}
         bulkActionRunning={props.bulkActionRunning}
+        onOpenSettings={props.onOpenSettings}
         onRetryPage={props.onRetryPage}
         canRetryPage={props.canRetryPage}
         selectionTranslation={props.selectionTranslation}
@@ -590,12 +732,16 @@ export function TranslationPane(props: TranslationPaneProps) {
     <EpubTranslationPane
       pages={props.pages}
       currentPage={props.currentPage}
+      setupRequired={props.setupRequired}
       statusMessage={props.statusMessage}
       progressLabel={props.progressLabel}
+      progressDetailLabel={props.progressDetailLabel}
+      progressDetailState={props.progressDetailState}
       bulkActionLabel={props.bulkActionLabel}
       onBulkAction={props.onBulkAction}
       bulkActionDisabled={props.bulkActionDisabled}
       bulkActionRunning={props.bulkActionRunning}
+      onOpenSettings={props.onOpenSettings}
       activePid={props.activePid}
       hoverPid={props.hoverPid}
       onHoverPid={props.onHoverPid}
