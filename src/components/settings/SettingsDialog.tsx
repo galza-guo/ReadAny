@@ -6,17 +6,15 @@ import {
 
 type SettingsDialogProps = {
   open: boolean;
-  onDone: () => void | Promise<void>;
   onOpenChange: (open: boolean) => void;
-  saveDisabled: boolean;
+  closeDisabled?: boolean;
   contentProps: SettingsDialogContentProps;
 };
 
 export function SettingsDialog({
   open,
-  onDone,
   onOpenChange,
-  saveDisabled,
+  closeDisabled = false,
   contentProps,
 }: SettingsDialogProps) {
   return (
@@ -37,17 +35,18 @@ export function SettingsDialog({
               <Dialog.Title className="dialog-title type-title-large">Settings</Dialog.Title>
             </div>
             <button
-              aria-label="Done"
+              aria-label="Close settings"
               className="btn btn-ghost btn-icon-only settings-dialog-done-button"
-              disabled={saveDisabled}
+              disabled={closeDisabled}
               onClick={() => {
-                void Promise.resolve(onDone()).catch(() => {});
+                void Promise.resolve(onOpenChange(false)).catch(() => {});
               }}
-              title={saveDisabled ? "Saving..." : "Done"}
+              title={closeDisabled ? "Closing..." : "Close"}
               type="button"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="m5 13 4 4L19 7" />
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
               </svg>
             </button>
           </div>

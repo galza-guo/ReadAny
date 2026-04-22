@@ -22,13 +22,14 @@ describe("settings dialog focus behavior", () => {
     expect(settingsDialogSource).toContain("tabIndex={-1}");
   });
 
-  test("renders a fixed settings header bar with the done action inside it", () => {
+  test("renders a fixed settings header bar with a plain close affordance", () => {
     const settingsDialogSource = readSettingsDialogSource();
 
     expect(settingsDialogSource).toContain('className="settings-dialog-header"');
     expect(settingsDialogSource).toContain('className="settings-dialog-title-row"');
     expect(settingsDialogSource).toContain('className="dialog-title type-title-large"');
-    expect(settingsDialogSource).toContain('aria-label="Done"');
+    expect(settingsDialogSource).toContain('aria-label="Close settings"');
+    expect(settingsDialogSource).toContain('title={closeDisabled ? "Closing..." : "Close"}');
     expect(settingsDialogSource).toContain('className="settings-dialog-body"');
   });
 
@@ -41,12 +42,21 @@ describe("settings dialog focus behavior", () => {
     expect(appSource).not.toContain("<Dialog.Content");
   });
 
-  test("app discards unsaved settings when the dialog closes without saving", () => {
+  test("app warns before closing when unfinished provider drafts still exist", () => {
     const appSource = readAppSource();
 
-    expect(appSource).toContain("const discardAllUnsavedSettings = useCallback(() => {");
-    expect(appSource).toContain("if (!open) {");
-    expect(appSource).toContain("discardAllUnsavedSettings();");
-    expect(appSource).toContain("const handleSettingsDone = useCallback(async () => {");
+    expect(appSource).toContain("settingsCloseConfirmOpen");
+    expect(appSource).toContain("collectBlockingUnsavedPresetIds");
+    expect(appSource).toContain("Discard unsaved changes?");
+    expect(appSource).not.toContain("discardAllUnsavedSettings");
+    expect(appSource).not.toContain("handleSettingsDone");
+  });
+
+  test("app only persists a preset before activation when that preset actually has unsaved changes", () => {
+    const appSource = readAppSource();
+
+    expect(appSource).toContain("const currentSaveState =");
+    expect(appSource).toContain("const shouldPersistDraftBeforeActivation =");
+    expect(appSource).toContain('currentSaveState !== "pristine" && currentSaveState !== "saved"');
   });
 });

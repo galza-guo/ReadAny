@@ -13,6 +13,9 @@ type ToastTone = "neutral" | "success" | "error";
 
 type ToastOptions = {
   message: string;
+  detail?: string;
+  actionLabel?: string;
+  onAction?: () => void;
   tone?: ToastTone;
   durationMs?: number;
 };
@@ -86,10 +89,30 @@ export function ToastProvider({ children }: PropsWithChildren) {
   }, []);
 
   const showToast = useCallback(
-    ({ message, tone = "neutral", durationMs = 3600 }: ToastOptions) => {
+    ({
+      message,
+      detail,
+      actionLabel,
+      onAction,
+      tone = "neutral",
+      durationMs = 3600,
+    }: ToastOptions) => {
       const id = nextToastIdRef.current++;
 
-      setToasts((current) => [...current, { id, message, tone, durationMs }].slice(-4));
+      setToasts((current) =>
+        [
+          ...current,
+          {
+            id,
+            message,
+            detail,
+            actionLabel,
+            onAction,
+            tone,
+            durationMs,
+          },
+        ].slice(-4)
+      );
 
       const timerId = window.setTimeout(() => {
         removeToast(id);
@@ -121,7 +144,22 @@ export function ToastProvider({ children }: PropsWithChildren) {
             <span className="toast__icon" aria-hidden="true">
               <ToastIcon tone={toast.tone} />
             </span>
-            <span className="toast__message">{toast.message}</span>
+            <div className="toast__copy">
+              <span className="toast__message">{toast.message}</span>
+              {toast.detail ? <span className="toast__detail">{toast.detail}</span> : null}
+              {toast.actionLabel && toast.onAction ? (
+                <button
+                  className="toast__action"
+                  onClick={() => {
+                    toast.onAction?.();
+                    removeToast(toast.id);
+                  }}
+                  type="button"
+                >
+                  {toast.actionLabel}
+                </button>
+              ) : null}
+            </div>
             <button
               aria-label="Dismiss notification"
               className="toast__dismiss"

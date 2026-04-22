@@ -3,331 +3,267 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import settingsDialogSource from "./SettingsDialogContent.tsx?raw";
-import { SettingsDialogContent } from "./SettingsDialogContent";
+import { SettingsDialogContent, type SettingsDialogContentProps } from "./SettingsDialogContent";
 
 const settingsStylesSource = readFileSync(
   resolve(import.meta.dir, "..", "..", "App.css"),
   "utf8"
 );
 
+function buildProps(
+  overrides: Partial<SettingsDialogContentProps> = {}
+): SettingsDialogContentProps {
+  const settings = overrides.settings ?? {
+    theme: "system",
+    activePresetId: "preset-1",
+    defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
+    presets: [
+      {
+        id: "preset-1",
+        label: "OpenRouter · openai/gpt-4o-mini",
+        providerKind: "openrouter" as const,
+        model: "openai/gpt-4o-mini",
+        apiKeyConfigured: true,
+      },
+    ],
+  };
+
+  return {
+    settings,
+    liveActivePresetId: settings.activePresetId,
+    editingPresetId: settings.presets[0]?.id ?? null,
+    editingPreset: settings.presets[0],
+    apiKeyEditingPresetId: null,
+    presetApiKeyDrafts: {},
+    presetStatuses: {},
+    presetSaveStatusById: {
+      [settings.presets[0]?.id ?? "preset-1"]: { state: "saved" },
+    },
+    presetTestRunningId: null,
+    presetModelsLoadingById: {},
+    testAllRunning: false,
+    testAllDisabled: false,
+    presetModels: {},
+    presetModelMessages: {},
+    onSettingsChange: () => {},
+    onAddPreset: () => "preset-2",
+    onDeletePreset: () => {},
+    onEditingPresetChange: () => {},
+    onActivatePreset: () => {},
+    onPresetChange: () => {},
+    onPresetApiKeyInputChange: () => {},
+    onPresetApiKeyFocus: () => {},
+    onPresetApiKeyBlur: () => {},
+    onRetryPresetSave: () => {},
+    onFetchPresetModels: () => {},
+    onTestPreset: () => {},
+    onTestAllPresets: () => {},
+    ...overrides,
+  };
+}
+
 describe("SettingsDialogContent", () => {
   test("renders one default language label and no helper note", () => {
-    const html = renderToStaticMarkup(
-      <SettingsDialogContent
-        settings={{
-          theme: "system",
-          activePresetId: "preset-1",
-          defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
-          presets: [
-            {
-              id: "preset-1",
-              label: "OpenRouter · openai/gpt-4o-mini",
-              providerKind: "openrouter",
-              model: "openai/gpt-4o-mini",
-            },
-          ],
-        }}
-        activePreset={{
-          id: "preset-1",
-          label: "OpenRouter · openai/gpt-4o-mini",
-          providerKind: "openrouter",
-          model: "openai/gpt-4o-mini",
-        }}
-        presetApiKeyInput=""
-        presetStatuses={{}}
-        presetSaving={false}
-        presetModelsLoading={false}
-        testAllRunning={false}
-        presetModels={{}}
-        onSettingsChange={() => {}}
-        onAddPreset={() => "preset-2"}
-        onDeletePreset={() => {}}
-        onDiscardPresetEdits={() => {}}
-        onPresetSelect={() => {}}
-        onPresetChange={() => {}}
-        onPresetApiKeyInputChange={() => {}}
-        onSaveSettings={() => {}}
-        onFetchPresetModels={() => {}}
-        onTestPreset={() => {}}
-        onTestAllPresets={() => {}}
-      />
-    );
+    const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
 
     expect(html.match(/Default language/g)?.length ?? 0).toBe(1);
     expect(html).not.toContain("New translations use this language by default.");
   });
 
-  test("renders inline preset editing instead of a separate preset details section", () => {
+  test("renders a provider picker and removes the old explicit save action", () => {
+    const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
+
+    expect(html).toContain("Add provider");
+    expect(settingsDialogSource).not.toContain("settings-save-action");
+    expect(settingsDialogSource).toContain("settings-provider-picker");
+    expect(settingsDialogSource).not.toContain("function PencilIcon()");
+  });
+
+  test("uses the preset title for activation and keeps save text lightweight", () => {
     const html = renderToStaticMarkup(
       <SettingsDialogContent
-        settings={{
-          theme: "system",
-          activePresetId: "preset-1",
-          defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
-          presets: [
-            {
-              id: "preset-1",
-              label: "OpenRouter · openai/gpt-4o-mini",
-              providerKind: "openrouter",
-              model: "openai/gpt-4o-mini",
+        {...buildProps({
+          liveActivePresetId: "preset-live",
+          settings: {
+            theme: "system",
+            activePresetId: "preset-live",
+            defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
+            presets: [
+              {
+                id: "preset-live",
+                label: "OpenRouter · openai/gpt-4o-mini",
+                providerKind: "openrouter",
+                model: "openai/gpt-4o-mini",
+                apiKeyConfigured: true,
+              },
+              {
+                id: "preset-2",
+                label: "DeepSeek · deepseek-chat",
+                providerKind: "deepseek",
+                model: "deepseek-chat",
+                apiKeyConfigured: true,
+              },
+            ],
+          },
+          editingPresetId: "preset-2",
+          editingPreset: {
+            id: "preset-2",
+            label: "DeepSeek · deepseek-chat",
+            providerKind: "deepseek",
+            model: "deepseek-chat",
+            apiKeyConfigured: true,
+          },
+          presetSaveStatusById: {
+            "preset-live": { state: "saved" },
+            "preset-2": { state: "dirty" },
+          },
+        })}
+      />
+    );
+
+    expect(html).not.toContain("In use");
+    expect(html).not.toContain(">Use<");
+    expect(html).toContain("Saving...");
+    expect(settingsDialogSource).toContain("onActivatePreset(preset.id)");
+    expect(settingsDialogSource).toContain("settings-preset-controls");
+    expect(settingsStylesSource).toContain(".settings-preset-status");
+  });
+
+  test("keeps save failures inline with a retry affordance instead of a save panel", () => {
+    const html = renderToStaticMarkup(
+      <SettingsDialogContent
+        {...buildProps({
+          presetSaveStatusById: {
+            "preset-1": {
+              state: "error",
+              detail: "Save failed: network issue",
             },
-          ],
-        }}
-        activePreset={{
-          id: "preset-1",
-          label: "OpenRouter · openai/gpt-4o-mini",
-          providerKind: "openrouter",
-          model: "openai/gpt-4o-mini",
-        }}
-        presetApiKeyInput=""
-        presetStatuses={{}}
-        presetSaving={false}
-        presetModelsLoading={false}
-        testAllRunning={false}
-        presetModels={{}}
-        onSettingsChange={() => {}}
-        onAddPreset={() => "preset-2"}
-        onDeletePreset={() => {}}
-        onDiscardPresetEdits={() => {}}
-        onPresetSelect={() => {}}
-        onPresetChange={() => {}}
-        onPresetApiKeyInputChange={() => {}}
-        onSaveSettings={() => {}}
-        onFetchPresetModels={() => {}}
-        onTestPreset={() => {}}
-        onTestAllPresets={() => {}}
+          },
+        })}
       />
     );
 
-    expect(html).not.toContain("Preset details");
-    expect(html).toContain("aria-label=\"Edit preset\"");
-  });
-
-  test("renders an empty-state prompt when no presets exist", () => {
-    const html = renderToStaticMarkup(
-      <SettingsDialogContent
-        settings={{
-          theme: "system",
-          activePresetId: "",
-          defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
-          presets: [],
-        }}
-        activePreset={undefined}
-        presetApiKeyInput=""
-        presetStatuses={{}}
-        presetSaving={false}
-        presetModelsLoading={false}
-        testAllRunning={false}
-        presetModels={{}}
-        onSettingsChange={() => {}}
-        onAddPreset={() => "preset-1"}
-        onDeletePreset={() => {}}
-        onDiscardPresetEdits={() => {}}
-        onPresetSelect={() => {}}
-        onPresetChange={() => {}}
-        onPresetApiKeyInputChange={() => {}}
-        onSaveSettings={() => {}}
-        onFetchPresetModels={() => {}}
-        onTestPreset={() => {}}
-        onTestAllPresets={() => {}}
-      />
-    );
-
-    expect(html).toContain("No presets yet");
-    expect(html).toContain("Add your first preset");
-  });
-
-  test("renders delete affordances for saved presets", () => {
-    const html = renderToStaticMarkup(
-      <SettingsDialogContent
-        settings={{
-          theme: "system",
-          activePresetId: "preset-1",
-          defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
-          presets: [
-            {
-              id: "preset-1",
-              label: "OpenRouter · openai/gpt-4o-mini",
-              providerKind: "openrouter",
-              model: "openai/gpt-4o-mini",
-            },
-          ],
-        }}
-        activePreset={{
-          id: "preset-1",
-          label: "OpenRouter · openai/gpt-4o-mini",
-          providerKind: "openrouter",
-          model: "openai/gpt-4o-mini",
-        }}
-        presetApiKeyInput=""
-        presetStatuses={{}}
-        presetSaving={false}
-        presetModelsLoading={false}
-        testAllRunning={false}
-        presetModels={{}}
-        onSettingsChange={() => {}}
-        onAddPreset={() => "preset-2"}
-        onDeletePreset={() => {}}
-        onDiscardPresetEdits={() => {}}
-        onPresetSelect={() => {}}
-        onPresetChange={() => {}}
-        onPresetApiKeyInputChange={() => {}}
-        onSaveSettings={() => {}}
-        onFetchPresetModels={() => {}}
-        onTestPreset={() => {}}
-        onTestAllPresets={() => {}}
-      />
-    );
-
-    expect(html).toContain("aria-label=\"Delete preset\"");
-    expect(html).toContain('class="btn btn-icon-only btn-quiet-action settings-icon-button"');
-    expect(
-      html
-    ).toContain(
-      'class="btn btn-icon-only btn-quiet-action settings-icon-button settings-icon-button-danger"'
-    );
-  });
-
-  test("renders model presets heading without redundant row badges or subtitles", () => {
-    const html = renderToStaticMarkup(
-      <SettingsDialogContent
-        settings={{
-          theme: "system",
-          activePresetId: "preset-1",
-          defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
-          presets: [
-            {
-              id: "preset-1",
-              label: "OpenRouter · openai/gpt-4o-mini",
-              providerKind: "openrouter",
-              model: "openai/gpt-4o-mini",
-            },
-          ],
-        }}
-        activePreset={{
-          id: "preset-1",
-          label: "OpenRouter · openai/gpt-4o-mini",
-          providerKind: "openrouter",
-          model: "openai/gpt-4o-mini",
-        }}
-        presetApiKeyInput=""
-        presetStatuses={{}}
-        presetSaving={false}
-        presetModelsLoading={false}
-        testAllRunning={false}
-        presetModels={{}}
-        onSettingsChange={() => {}}
-        onAddPreset={() => "preset-2"}
-        onDeletePreset={() => {}}
-        onDiscardPresetEdits={() => {}}
-        onPresetSelect={() => {}}
-        onPresetChange={() => {}}
-        onPresetApiKeyInputChange={() => {}}
-        onSaveSettings={() => {}}
-        onFetchPresetModels={() => {}}
-        onTestPreset={() => {}}
-        onTestAllPresets={() => {}}
-      />
-    );
-
-    expect(html).toContain("Model Presets");
-    expect(html).toContain('class="settings-toolbar-title type-section-title"');
-    expect(html).toContain('class="settings-label type-field-label"');
-    expect(html).toContain('class="btn btn-small btn-quiet-action"');
-    expect(html).toContain(">Test all<");
-    expect(html).toContain('class="btn btn-icon-only btn-quiet-action settings-icon-button"');
-    expect(html).not.toContain(">Active<");
-    expect(html.match(/OpenRouter/g)?.length ?? 0).toBe(1);
-  });
-
-  test("uses quiet actions for add and test, while save is a bold text action", () => {
-    expect(settingsDialogSource).toContain('className="btn btn-icon-only btn-quiet-action settings-icon-button"');
-    expect(settingsDialogSource).toContain('className="settings-save-action"');
-    expect(settingsDialogSource).not.toContain('className="btn btn-primary"');
-    expect(settingsDialogSource).toContain('className="btn btn-quiet-action"');
-    expect(settingsDialogSource).toContain("onClick={onTestPreset}");
+    expect(html).toContain("Save failed");
+    expect(html).toContain("Retry save");
+    expect(settingsDialogSource).toContain('aria-live="polite"');
+    expect(settingsDialogSource).toContain("settings-inline-error-row");
+    expect(settingsDialogSource).not.toContain("settings-save-state-panel");
   });
 
   test("keeps the api key field in a masked saved-key state until the user edits it", () => {
     expect(settingsDialogSource).toContain("getPresetApiKeyFieldState");
-    expect(settingsDialogSource).toContain("placeholder={apiKeyFieldState?.placeholder}");
-    expect(settingsDialogSource).toContain('value={apiKeyFieldState?.displayValue ?? ""}');
+    expect(settingsDialogSource).toContain('value={editingPresetApiKeyState?.displayValue ?? ""}');
+    expect(settingsDialogSource).toContain("onPresetApiKeyFocus(editingPreset.id)");
+    expect(settingsDialogSource).toContain("onPresetApiKeyBlur(editingPreset.id)");
   });
 
-  test("puts API key before model and uses one searchable model field", () => {
-    expect(settingsDialogSource.indexOf('htmlFor="preset-api-key"')).toBeLessThan(
-      settingsDialogSource.indexOf('htmlFor="preset-model"')
-    );
-    expect(settingsDialogSource).toContain("model-combobox");
-    expect(settingsDialogSource).not.toContain('Select.Value placeholder="Choose a model"');
-    expect(settingsDialogSource).not.toContain('aria-label="Preset model"');
-  });
-
-  test("keeps only the preset-row success tick and uses a plain check for saved state", () => {
-    expect(settingsDialogSource).not.toContain("Saved key on file");
-    expect(settingsDialogSource).not.toContain('{status.ok ? "OK" : "Issue"}');
-    expect(settingsDialogSource).toContain("settings-preset-success");
-    expect(settingsDialogSource).toContain("settings-action-status");
-    expect(settingsDialogSource).toContain("activePresetIsSaved && !presetSaving");
-    expect(settingsDialogSource).not.toContain('aria-label="Test passed"');
-    expect(settingsDialogSource).toContain("function CheckIcon()");
-  });
-
-  test("discards unsaved preset edits when the user exits edit mode", () => {
-    expect(settingsDialogSource).toContain("onDiscardPresetEdits");
-    expect(settingsDialogSource).toContain("discardExpandedPreset");
-    expect(settingsDialogSource).toContain("if (expandedPresetId && expandedPresetId !== presetId)");
-  });
-
-  test("clicking the preset name uses the same edit toggle behavior as the edit button", () => {
-    expect(settingsDialogSource).toContain("togglePresetEditor");
-    expect(settingsDialogSource).toContain("onClick={() => togglePresetEditor(preset.id)}");
-  });
-
-  test("shows an animated testing indicator beside the test button while a preset test is running", () => {
-    expect(settingsDialogSource).toContain("presetTestRunning");
-    expect(settingsDialogSource).toContain("settings-action-pending");
-    expect(settingsDialogSource).toContain("settings-action-ellipsis");
-    expect(settingsDialogSource).toContain('aria-label="Testing in progress"');
-  });
-
-  test("does not draw an extra separator line when a preset expands", () => {
-    expect(settingsStylesSource).not.toMatch(/\.settings-preset-editor\s*\{[^}]*border-top:/s);
-  });
-
-  test("renders a saved custom default language label", () => {
+  test("shows a warning affordance for failed preset tests and keeps detail for hover", () => {
     const html = renderToStaticMarkup(
       <SettingsDialogContent
-        settings={{
-          theme: "system",
-          activePresetId: "",
-          defaultLanguage: {
-            code: "custom:hong-kong-traditional-chinese",
-            label: "Hong Kong Traditional Chinese",
+        {...buildProps({
+          presetStatuses: {
+            "preset-1": {
+              presetId: "preset-1",
+              label: "OpenRouter · openai/gpt-4o-mini",
+              ok: false,
+              message: "This API key was not accepted. Check it and try again.",
+              detail: "OpenRouter error: 401 Unauthorized Invalid API Key",
+            },
           },
-          presets: [],
-        }}
-        activePreset={undefined}
-        presetApiKeyInput=""
-        presetStatuses={{}}
-        presetSaving={false}
-        presetModelsLoading={false}
-        testAllRunning={false}
-        presetModels={{}}
-        onSettingsChange={() => {}}
-        onAddPreset={() => "preset-1"}
-        onDeletePreset={() => {}}
-        onDiscardPresetEdits={() => {}}
-        onPresetSelect={() => {}}
-        onPresetChange={() => {}}
-        onPresetApiKeyInputChange={() => {}}
-        onSaveSettings={() => {}}
-        onFetchPresetModels={() => {}}
-        onTestPreset={() => {}}
-        onTestAllPresets={() => {}}
+        })}
       />
     );
 
-    expect(html).toContain("Hong Kong Traditional Chinese");
+    expect(html).toContain("settings-preset-warning");
+    expect(html).toContain("This API key was not accepted. Check it and try again.");
+    expect(settingsDialogSource).toContain("settings-preset-test-tooltip");
+    expect(settingsDialogSource).toContain("testStatus.detail ?? testStatus.message");
+  });
+
+  test("keeps saved status hidden by default and fades it after a successful save transition", () => {
+    const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
+
+    expect(html).not.toContain("settings-preset-status");
+    expect(settingsDialogSource).toContain("savedIndicatorPhaseById");
+    expect(settingsDialogSource).toContain("setSavedIndicatorPhaseById");
+    expect(settingsDialogSource).toContain("window.setTimeout(() => {");
+    expect(settingsStylesSource).toContain(".settings-preset-status.is-fading");
+  });
+
+  test("shows inline model-load guidance instead of a mysteriously disabled button", () => {
+    const html = renderToStaticMarkup(
+      <SettingsDialogContent
+        {...buildProps({
+          settings: {
+            theme: "system",
+            activePresetId: "preset-1",
+            defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
+            presets: [
+              {
+                id: "preset-1",
+                label: "Custom",
+                providerKind: "openai-compatible",
+                model: "",
+                baseUrl: "",
+              },
+            ],
+          },
+          editingPreset: {
+            id: "preset-1",
+            label: "Custom",
+            providerKind: "openai-compatible",
+            model: "",
+            baseUrl: "",
+          },
+          presetSaveStatusById: {
+            "preset-1": { state: "invalid", detail: "Add Base URL" },
+          },
+        })}
+      />
+    );
+
+    expect(html).toContain("Add Base URL and API key to load models.");
+    expect(settingsDialogSource).toContain("getModelLoadHint");
+  });
+
+  test("shows a base url field and hides the api key field for ollama", () => {
+    const html = renderToStaticMarkup(
+      <SettingsDialogContent
+        {...buildProps({
+          settings: {
+            theme: "system",
+            activePresetId: "preset-1",
+            defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
+            presets: [
+              {
+                id: "preset-1",
+                label: "Ollama · llama3.2",
+                providerKind: "ollama",
+                model: "llama3.2",
+                baseUrl: "http://localhost:11434/v1",
+              },
+            ],
+          },
+          editingPreset: {
+            id: "preset-1",
+            label: "Ollama · llama3.2",
+            providerKind: "ollama",
+            model: "llama3.2",
+            baseUrl: "http://localhost:11434/v1",
+          },
+        })}
+      />
+    );
+
+    expect(html).toContain('id="preset-base-url"');
+    expect(html).not.toContain('id="preset-api-key"');
+    expect(settingsDialogSource).toContain("providerUsesApiKey");
+    expect(settingsDialogSource).toContain("providerUsesEditableBaseUrl");
+  });
+
+  test("keeps delete in the expanded editor rather than the collapsed row action cluster", () => {
+    expect(settingsDialogSource).not.toContain('aria-label="Edit preset"');
+    expect(settingsDialogSource).toContain("btn-danger-quiet");
+    expect(settingsStylesSource).toContain(".settings-preset-chevron");
   });
 });

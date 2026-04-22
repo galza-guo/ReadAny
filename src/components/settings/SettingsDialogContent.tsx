@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import * as Label from "@radix-ui/react-label";
+import * as Popover from "@radix-ui/react-popover";
 import * as Select from "@radix-ui/react-select";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { ConfirmationDialog } from "../ConfirmationDialog";
 import { LanguageCombobox } from "./LanguageCombobox";
 import { canListModels } from "../../lib/providerForm";
 import {
+  getDefaultBaseUrlForProvider,
   getDefaultModelForProvider,
   getPresetApiKeyFieldState,
   getPresetValidationState,
   getProviderOptionLabel,
   PRESET_PROVIDER_OPTIONS,
+  providerUsesApiKey,
+  providerUsesEditableBaseUrl,
 } from "../../lib/appSettings";
 import type {
+  PresetSaveStatus,
   PresetTestResult,
   TranslationPreset,
   TranslationProviderKind,
@@ -20,43 +26,42 @@ import type {
 
 export type SettingsDialogContentProps = {
   settings: TranslationSettings;
-  activePreset?: TranslationPreset;
-  presetApiKeyInput: string;
+  liveActivePresetId: string;
+  sessionFallbackPresetId?: string | null;
+  editingPresetId: string | null;
+  editingPreset?: TranslationPreset;
+  apiKeyEditingPresetId: string | null;
+  presetApiKeyDrafts: Record<string, string>;
   presetStatuses: Record<string, PresetTestResult | undefined>;
-  activePresetIsSaved?: boolean;
-  presetSaving: boolean;
-  presetTestRunning?: boolean;
-  presetModelsLoading: boolean;
+  presetSaveStatusById: Record<string, PresetSaveStatus>;
+  presetTestRunningId: string | null;
+  presetModelsLoadingById: Record<string, boolean>;
   testAllRunning: boolean;
   testAllDisabled?: boolean;
   presetModels: Record<string, string[]>;
-  onSettingsChange: (settings: TranslationSettings) => void;
-  onAddPreset: () => string;
-  onDeletePreset: (presetId: string) => void;
-  onDiscardPresetEdits: (presetId: string) => void;
-  onPresetSelect: (presetId: string) => void;
+  presetModelMessages: Record<string, string | undefined>;
+  onSettingsChange: (settings: TranslationSettings) => void | Promise<void>;
+  onAddPreset: (providerKind: TranslationProviderKind) => string;
+  onDeletePreset: (presetId: string) => void | Promise<void>;
+  onEditingPresetChange: (presetId: string | null) => void | Promise<void>;
+  onActivatePreset: (presetId: string) => void | Promise<void>;
   onPresetChange: (preset: TranslationPreset) => void;
-  onPresetApiKeyInputChange: (apiKey: string) => void;
-  onSaveSettings: () => void | Promise<void>;
-  onFetchPresetModels: () => void;
-  onTestPreset: () => void;
-  onTestAllPresets: () => void;
+  onPresetApiKeyInputChange: (presetId: string, apiKey: string) => void;
+  onPresetApiKeyFocus: (presetId: string | null) => void;
+  onPresetApiKeyBlur: (presetId: string) => void | Promise<void>;
+  onRetryPresetSave: (presetId: string) => void | Promise<void>;
+  onFetchPresetModels: (presetId: string, options?: { auto?: boolean }) => void | Promise<void>;
+  onTestPreset: (presetId: string) => void | Promise<void>;
+  onTestAllPresets: () => void | Promise<void>;
 };
+
+type SavedIndicatorPhase = "visible" | "fading";
 
 function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M12 5v14" />
       <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 20h9" />
-      <path d="m16.5 3.5 4 4L7 21l-4 1 1-4Z" />
     </svg>
   );
 }
@@ -90,10 +95,22 @@ function CheckCircleIcon() {
   );
 }
 
-function CheckIcon() {
+function WarningCircleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m5 13 4 4L19 7" />
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v5" strokeLinecap="round" />
+      <circle cx="12" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function HelpIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-.8.7-1.7 1.2-1.7 2.7" />
+      <circle cx="12" cy="17" r="1" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -164,9 +181,7 @@ function ModelCombobox({
 
       event.preventDefault();
       setOpen(true);
-      setHighlightedIndex((current) =>
-        Math.min(current + 1, filteredOptions.length - 1)
-      );
+      setHighlightedIndex((current) => Math.min(current + 1, filteredOptions.length - 1));
       return;
     }
 
@@ -231,9 +246,9 @@ function ModelCombobox({
                   ref={(element) => {
                     optionRefs.current[index] = element;
                   }}
-                  className={`model-combobox-option ${
-                    isHighlighted ? "is-highlighted" : ""
-                  } ${isSelected ? "is-selected" : ""}`}
+                  className={`model-combobox-option ${isHighlighted ? "is-highlighted" : ""} ${
+                    isSelected ? "is-selected" : ""
+                  }`}
                   onClick={() => handleSelect(model)}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setHighlightedIndex(index)}
@@ -254,100 +269,270 @@ function ModelCombobox({
   );
 }
 
+function getPresetRowStatusCopy(
+  status: PresetSaveStatus | undefined,
+  savedIndicatorPhase?: SavedIndicatorPhase,
+) {
+  if (status?.state === "dirty" || status?.state === "saving") {
+    return {
+      className: "settings-preset-status is-progress",
+      label: "Saving...",
+    };
+  }
+
+  if (status?.state === "error") {
+    return {
+      className: "settings-preset-status is-error",
+      label: "Save failed",
+    };
+  }
+
+  if (savedIndicatorPhase) {
+    return {
+      className: `settings-preset-status is-ok ${
+        savedIndicatorPhase === "fading" ? "is-fading" : ""
+      }`,
+      label: "Saved",
+    };
+  }
+
+  return null;
+}
+
+function getModelLoadHint(preset: TranslationPreset, apiKeyInput: string) {
+  if (providerUsesEditableBaseUrl(preset.providerKind) && !preset.baseUrl?.trim()) {
+    return providerUsesApiKey(preset.providerKind)
+      ? "Add Base URL and API key to load models."
+      : "Add Base URL to load models.";
+  }
+
+  if (providerUsesApiKey(preset.providerKind) && !apiKeyInput.trim() && !preset.apiKeyConfigured) {
+    return "Add API key to load models automatically.";
+  }
+
+  return "The model list will load automatically when this provider is ready.";
+}
+
 export function SettingsDialogContent({
   settings,
-  activePreset,
-  presetApiKeyInput,
+  liveActivePresetId,
+  sessionFallbackPresetId = null,
+  editingPresetId,
+  editingPreset,
+  apiKeyEditingPresetId,
+  presetApiKeyDrafts,
   presetStatuses,
-  activePresetIsSaved = false,
-  presetSaving,
-  presetTestRunning = false,
-  presetModelsLoading,
+  presetSaveStatusById,
+  presetTestRunningId,
+  presetModelsLoadingById,
   testAllRunning,
   testAllDisabled = false,
   presetModels,
+  presetModelMessages,
   onSettingsChange,
   onAddPreset,
   onDeletePreset,
-  onDiscardPresetEdits,
-  onPresetSelect,
+  onEditingPresetChange,
+  onActivatePreset,
   onPresetChange,
   onPresetApiKeyInputChange,
-  onSaveSettings,
+  onPresetApiKeyFocus,
+  onPresetApiKeyBlur,
+  onRetryPresetSave,
   onFetchPresetModels,
   onTestPreset,
   onTestAllPresets,
 }: SettingsDialogContentProps) {
-  const [expandedPresetId, setExpandedPresetId] = useState<string | null>(null);
-  const [apiKeyEditingPresetId, setApiKeyEditingPresetId] = useState<string | null>(null);
   const [pendingDeletePresetId, setPendingDeletePresetId] = useState<string | null>(null);
-
-  const fetchedModels = activePreset ? presetModels[activePreset.id] ?? [] : [];
-  const selectedPresetStatus = activePreset
-    ? presetStatuses[activePreset.id]
-    : undefined;
-  const selectedPresetError = selectedPresetStatus && !selectedPresetStatus.ok
-    ? selectedPresetStatus
-    : undefined;
-  const canFetchModels = activePreset
-    ? canListModels({
-        kind: activePreset.providerKind,
-        baseUrl: activePreset.baseUrl,
-        apiKey: presetApiKeyInput,
-        apiKeyConfigured: activePreset.apiKeyConfigured,
-      })
-    : false;
+  const [providerPickerOpen, setProviderPickerOpen] = useState(false);
+  const [savedIndicatorPhaseById, setSavedIndicatorPhaseById] = useState<
+    Record<string, SavedIndicatorPhase>
+  >({});
+  const savedIndicatorTimersRef = useRef<
+    Record<string, { fadeTimerId?: number; hideTimerId?: number }>
+  >({});
+  const previousSaveStateByIdRef = useRef<Record<string, PresetSaveStatus["state"] | undefined>>(
+    {},
+  );
 
   const pendingDeletePreset = pendingDeletePresetId
     ? settings.presets.find((preset) => preset.id === pendingDeletePresetId)
     : undefined;
-  const activePresetValidation = useMemo(
-    () =>
-      activePreset
-        ? getPresetValidationState(activePreset, presetApiKeyInput)
-        : undefined,
-    [activePreset, presetApiKeyInput]
-  );
-  const apiKeyFieldState = activePreset
+
+  const editingPresetApiKeyInput = editingPreset
+    ? presetApiKeyDrafts[editingPreset.id] ?? ""
+    : "";
+  const editingPresetValidation = editingPreset
+    ? getPresetValidationState(editingPreset, editingPresetApiKeyInput)
+    : undefined;
+  const editingPresetSaveStatus = editingPreset
+    ? presetSaveStatusById[editingPreset.id]
+    : undefined;
+  const editingPresetShowsApiKeyField = editingPreset
+    ? providerUsesApiKey(editingPreset.providerKind)
+    : false;
+  const editingPresetShowsBaseUrlField = editingPreset
+    ? providerUsesEditableBaseUrl(editingPreset.providerKind)
+    : false;
+  const editingPresetApiKeyState = editingPreset
+    && editingPresetShowsApiKeyField
     ? getPresetApiKeyFieldState({
-        apiKeyConfigured: activePreset.apiKeyConfigured,
-        apiKeyInput: presetApiKeyInput,
-        isEditing: apiKeyEditingPresetId === activePreset.id,
+        apiKeyConfigured: editingPreset.apiKeyConfigured,
+        apiKeyInput: editingPresetApiKeyInput,
+        isEditing: apiKeyEditingPresetId === editingPreset.id,
       })
     : undefined;
-  const apiKeySaved = Boolean(activePreset?.apiKeyConfigured && !presetApiKeyInput.trim());
-  const modelPlaceholder = activePreset
-    ? `e.g. ${getDefaultModelForProvider(activePreset.providerKind)}`
-    : "e.g. openai/gpt-4o-mini";
+  const editingPresetModels = editingPreset ? presetModels[editingPreset.id] ?? [] : [];
+  const editingPresetModelMessage = editingPreset
+    ? presetModelMessages[editingPreset.id]
+    : undefined;
+  const editingPresetCanLoadModels = editingPreset
+    ? canListModels({
+        kind: editingPreset.providerKind,
+        baseUrl: editingPreset.baseUrl,
+        apiKey: editingPresetApiKeyInput,
+        apiKeyConfigured: editingPreset.apiKeyConfigured,
+      })
+    : false;
 
-  const discardExpandedPreset = (nextExpandedPresetId: string | null = null) => {
-    if (expandedPresetId) {
-      onDiscardPresetEdits(expandedPresetId);
-      setApiKeyEditingPresetId((current) =>
-        current === expandedPresetId ? null : current
-      );
-    }
-
-    setExpandedPresetId(nextExpandedPresetId);
-  };
-
-  const togglePresetEditor = (presetId: string) => {
-    if (expandedPresetId === presetId) {
-      discardExpandedPreset();
+  const clearSavedIndicatorTimers = (presetId: string) => {
+    const timers = savedIndicatorTimersRef.current[presetId];
+    if (!timers) {
       return;
     }
 
-    if (expandedPresetId && expandedPresetId !== presetId) {
-      discardExpandedPreset(presetId);
-    } else {
-      setExpandedPresetId(presetId);
+    if (timers.fadeTimerId !== undefined) {
+      window.clearTimeout(timers.fadeTimerId);
     }
 
-    onPresetSelect(presetId);
+    if (timers.hideTimerId !== undefined) {
+      window.clearTimeout(timers.hideTimerId);
+    }
+
+    delete savedIndicatorTimersRef.current[presetId];
   };
 
+  useEffect(() => {
+    const presetIds = new Set(settings.presets.map((preset) => preset.id));
+
+    Object.keys(savedIndicatorTimersRef.current).forEach((presetId) => {
+      if (!presetIds.has(presetId)) {
+        clearSavedIndicatorTimers(presetId);
+      }
+    });
+
+    Object.keys(previousSaveStateByIdRef.current).forEach((presetId) => {
+      if (!presetIds.has(presetId)) {
+        delete previousSaveStateByIdRef.current[presetId];
+      }
+    });
+
+    settings.presets.forEach((preset) => {
+      const presetId = preset.id;
+      const currentState = (presetSaveStatusById[presetId]?.state ?? "pristine") as PresetSaveStatus["state"];
+      const previousState = previousSaveStateByIdRef.current[presetId];
+
+      if (currentState === "dirty" || currentState === "saving" || currentState === "error") {
+        clearSavedIndicatorTimers(presetId);
+        setSavedIndicatorPhaseById((current) => {
+          if (!(presetId in current)) {
+            return current;
+          }
+
+          const { [presetId]: _removed, ...rest } = current;
+          return rest;
+        });
+      } else if (
+        currentState === "saved" &&
+        (previousState === "dirty" || previousState === "saving" || previousState === "error")
+      ) {
+        clearSavedIndicatorTimers(presetId);
+        setSavedIndicatorPhaseById((current) => ({
+          ...current,
+          [presetId]: "visible",
+        }));
+
+        const fadeTimerId = window.setTimeout(() => {
+          setSavedIndicatorPhaseById((current) => {
+            if (!(presetId in current)) {
+              return current;
+            }
+
+            return {
+              ...current,
+              [presetId]: "fading",
+            };
+          });
+        }, 1700);
+
+        const hideTimerId = window.setTimeout(() => {
+          setSavedIndicatorPhaseById((current) => {
+            if (!(presetId in current)) {
+              return current;
+            }
+
+            const { [presetId]: _removed, ...rest } = current;
+            return rest;
+          });
+          delete savedIndicatorTimersRef.current[presetId];
+        }, 2000);
+
+        savedIndicatorTimersRef.current[presetId] = {
+          fadeTimerId,
+          hideTimerId,
+        };
+      } else if (currentState === "pristine" || currentState === "invalid") {
+        clearSavedIndicatorTimers(presetId);
+        setSavedIndicatorPhaseById((current) => {
+          if (!(presetId in current)) {
+            return current;
+          }
+
+          const { [presetId]: _removed, ...rest } = current;
+          return rest;
+        });
+      }
+
+      previousSaveStateByIdRef.current[presetId] = currentState;
+    });
+  }, [presetSaveStatusById, settings.presets]);
+
+  useEffect(() => {
+    return () => {
+      Object.keys(savedIndicatorTimersRef.current).forEach((presetId) => {
+        clearSavedIndicatorTimers(presetId);
+      });
+    };
+  }, []);
+
+  const helpPopover = (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          aria-label="How to set this up"
+          className="btn btn-icon-only btn-quiet-action settings-help-button"
+          type="button"
+        >
+          <HelpIcon />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content className="settings-help-popover" side="bottom" align="start" sideOffset={8}>
+          <div className="settings-help-title">How to set this up</div>
+          <ol className="settings-help-list">
+            <li>Add a provider.</li>
+            <li>Add any required connection details.</li>
+            <li>Pick a model.</li>
+            <li>Use Test connection to confirm.</li>
+          </ol>
+          <Popover.Arrow className="popover-arrow" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+
   return (
-    <>
+    <Tooltip.Provider delayDuration={250}>
       <div className="settings-layout">
         <div className="settings-block settings-block-inline">
           <Label.Root className="settings-label type-field-label" htmlFor="default-language-select">
@@ -357,10 +542,12 @@ export function SettingsDialogContent({
             <LanguageCombobox
               id="default-language-select"
               onChange={(nextLanguage) =>
-                onSettingsChange({
-                  ...settings,
-                  defaultLanguage: nextLanguage,
-                })
+                void Promise.resolve(
+                  onSettingsChange({
+                    ...settings,
+                    defaultLanguage: nextLanguage,
+                  })
+                ).catch(() => {})
               }
               value={settings.defaultLanguage}
             />
@@ -369,79 +556,160 @@ export function SettingsDialogContent({
 
         <div className="settings-block">
           <div className="settings-toolbar">
-            <span className="settings-toolbar-title type-section-title">Model Presets</span>
+            <div className="settings-toolbar-heading">
+              <span className="settings-toolbar-title type-section-title">Model Presets</span>
+              {helpPopover}
+            </div>
             <div className="settings-toolbar-actions">
               {settings.presets.length > 0 ? (
                 <button
                   className="btn btn-small btn-quiet-action"
                   disabled={testAllRunning || testAllDisabled}
-                  onClick={onTestAllPresets}
+                  onClick={() => {
+                    void Promise.resolve(onTestAllPresets()).catch(() => {});
+                  }}
                   type="button"
                 >
                   {testAllRunning ? "Testing..." : "Test all"}
                 </button>
               ) : null}
-              <button
-                className="btn btn-icon-only btn-quiet-action settings-icon-button"
-                aria-label="Add preset"
-                title="Add preset"
-                onClick={() => {
-                  const presetId = onAddPreset();
-                  if (presetId) {
-                    setExpandedPresetId(presetId);
-                  }
-                }}
-                type="button"
-              >
-                <PlusIcon />
-              </button>
+              <Popover.Root open={providerPickerOpen} onOpenChange={setProviderPickerOpen}>
+                <Popover.Trigger asChild>
+                  <button
+                    className="btn btn-icon-only btn-quiet-action settings-icon-button"
+                    aria-label="Add provider"
+                    title="Add provider"
+                    type="button"
+                  >
+                    <PlusIcon />
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    className="settings-help-popover settings-provider-picker"
+                    side="bottom"
+                    align="end"
+                    sideOffset={8}
+                  >
+                    <div className="settings-help-title">Add provider</div>
+                    <div className="settings-provider-picker-list">
+                      {PRESET_PROVIDER_OPTIONS.map((provider) => (
+                        <button
+                          key={provider.value}
+                          className="settings-provider-option"
+                          onClick={() => {
+                            const presetId = onAddPreset(provider.value);
+                            setProviderPickerOpen(false);
+                            if (presetId) {
+                              void Promise.resolve(onEditingPresetChange(presetId)).catch(() => {});
+                            }
+                          }}
+                          type="button"
+                        >
+                          <span>{provider.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <Popover.Arrow className="popover-arrow" />
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
             </div>
+          </div>
+
+          <div className="settings-toggle-row">
+            <div className="settings-toggle-copy">
+              <div className="settings-toggle-title-row">
+                <span className="settings-toggle-title">Automatic fallback</span>
+                <span className="settings-experimental-badge">Experimental</span>
+              </div>
+              <span className="settings-toggle-detail">
+                Retry another usable preset after a failure or timeout.
+              </span>
+            </div>
+            <button
+              aria-checked={settings.autoFallbackEnabled}
+              className={`settings-switch ${settings.autoFallbackEnabled ? "is-on" : ""}`}
+              onClick={() => {
+                void Promise.resolve(
+                  onSettingsChange({
+                    ...settings,
+                    autoFallbackEnabled: !settings.autoFallbackEnabled,
+                  })
+                ).catch(() => {});
+              }}
+              role="switch"
+              type="button"
+            >
+              <span className="settings-switch-thumb" />
+            </button>
           </div>
 
           {settings.presets.length === 0 ? (
             <div className="settings-empty-state">
-              <p className="settings-empty-title type-pane-title">No presets yet</p>
+              <p className="settings-empty-title type-pane-title">Add your first provider</p>
               <p className="settings-empty-copy type-meta">
-                Add your first preset to connect a model provider.
+                To turn on translation, connect a provider and finish its setup.
               </p>
               <button
                 className="btn"
                 onClick={() => {
-                  const presetId = onAddPreset();
-                  if (presetId) {
-                    setExpandedPresetId(presetId);
-                  }
+                  setProviderPickerOpen(true);
                 }}
                 type="button"
               >
                 <PlusIcon />
-                Add your first preset
+                Add provider
               </button>
             </div>
           ) : (
             <div className="settings-preset-list">
               {settings.presets.map((preset) => {
-                const status = presetStatuses[preset.id];
-                const isSelected = preset.id === settings.activePresetId;
-                const isExpanded = expandedPresetId === preset.id && isSelected;
+                const isEditing = preset.id === editingPresetId;
+                const isActive = preset.id === liveActivePresetId;
+                const isSessionActive =
+                  sessionFallbackPresetId !== null &&
+                  sessionFallbackPresetId === preset.id &&
+                  !isActive;
+                const apiKeyInput = presetApiKeyDrafts[preset.id] ?? "";
+                const validation = getPresetValidationState(preset, apiKeyInput);
+                const testStatus = presetStatuses[preset.id];
+                const saveStatus = presetSaveStatusById[preset.id];
+                const rowStatus = getPresetRowStatusCopy(
+                  saveStatus,
+                  savedIndicatorPhaseById[preset.id],
+                );
 
                 return (
                   <div
                     key={preset.id}
                     className={`settings-preset-item settings-preset-item--expandable ${
-                      isSelected ? "is-selected" : ""
-                    } ${isExpanded ? "is-expanded" : ""}`}
+                      isEditing ? "is-expanded" : ""
+                    } ${isActive ? "is-selected" : ""}`}
                   >
                     <div className="settings-preset-row">
                       <button
                         className="settings-preset-main"
-                        onClick={() => togglePresetEditor(preset.id)}
+                        onClick={() => {
+                          if (isActive || !validation.isValid) {
+                            return;
+                          }
+
+                          void Promise.resolve(onActivatePreset(preset.id)).catch(() => {});
+                        }}
+                        title={
+                          isActive
+                            ? "Currently in use"
+                            : validation.isValid
+                              ? "Use this provider"
+                              : "Finish setup to use this provider"
+                        }
                         type="button"
                       >
                         <div className="settings-preset-copy">
                           <div className="settings-preset-title-row">
                             <span className="settings-preset-label type-pane-title">{preset.label}</span>
-                            {status?.ok ? (
+                            {testStatus?.ok ? (
                               <span
                                 aria-label="Preset test passed"
                                 className="settings-preset-success"
@@ -449,209 +717,247 @@ export function SettingsDialogContent({
                               >
                                 <CheckCircleIcon />
                               </span>
+                            ) : testStatus ? (
+                              <Tooltip.Root>
+                                <Tooltip.Trigger asChild>
+                                  <span
+                                    aria-label="Preset test failed"
+                                    className="settings-preset-warning"
+                                    title={testStatus.detail ?? testStatus.message}
+                                  >
+                                    <WarningCircleIcon />
+                                  </span>
+                                </Tooltip.Trigger>
+                                <Tooltip.Portal>
+                                  <Tooltip.Content
+                                    className="tooltip-content settings-preset-test-tooltip"
+                                    side="top"
+                                    sideOffset={6}
+                                  >
+                                    <div className="settings-preset-test-tooltip__summary">
+                                      {testStatus.message}
+                                    </div>
+                                    {testStatus.detail ? (
+                                      <div className="settings-preset-test-tooltip__detail">
+                                        {testStatus.detail}
+                                      </div>
+                                    ) : null}
+                                    <Tooltip.Arrow className="tooltip-arrow" />
+                                  </Tooltip.Content>
+                                </Tooltip.Portal>
+                              </Tooltip.Root>
                             ) : null}
                           </div>
                         </div>
                       </button>
-                      <div className="settings-preset-actions">
+                      <div className="settings-preset-controls">
+                        {isSessionActive ? (
+                          <span className="settings-preset-status is-session">
+                            In use this session
+                          </span>
+                        ) : null}
+                        {rowStatus ? (
+                          <span className={rowStatus.className}>{rowStatus.label}</span>
+                        ) : null}
                         <button
-                          className="btn btn-icon-only btn-quiet-action settings-icon-button"
-                          aria-label="Edit preset"
-                          title="Edit preset"
-                          onClick={() => togglePresetEditor(preset.id)}
+                          aria-expanded={isEditing}
+                          aria-label={isEditing ? "Collapse provider settings" : "Expand provider settings"}
+                          className="btn btn-icon-only btn-quiet-action settings-preset-chevron-button"
+                          onClick={() => {
+                            void Promise.resolve(
+                              onEditingPresetChange(isEditing ? null : preset.id)
+                            ).catch(() => {});
+                          }}
                           type="button"
                         >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          className="btn btn-icon-only btn-quiet-action settings-icon-button settings-icon-button-danger"
-                          aria-label="Delete preset"
-                          title="Delete preset"
-                          onClick={() => setPendingDeletePresetId(preset.id)}
-                          type="button"
-                        >
-                          <TrashIcon />
+                          <span
+                            aria-hidden="true"
+                            className={`settings-preset-chevron ${isEditing ? "is-open" : ""}`}
+                          >
+                            <ChevronDownIcon />
+                          </span>
                         </button>
                       </div>
                     </div>
 
-                    {isExpanded && activePreset ? (
+                    {isEditing && editingPreset?.id === preset.id ? (
                       <div className="settings-preset-editor">
-                      <div className="settings-item">
-                        <Label.Root
-                          className="settings-label type-field-label"
-                          htmlFor="preset-provider-kind"
-                        >
-                          Provider
-                        </Label.Root>
-                        <Select.Root
-                          value={activePreset.providerKind}
-                          onValueChange={(value) =>
-                            onPresetChange({
-                              ...activePreset,
-                              providerKind: value as TranslationProviderKind,
-                            })
-                          }
-                        >
-                          <Select.Trigger
-                            className="select-trigger"
-                            aria-label="Provider"
-                            id="preset-provider-kind"
-                          >
-                            <span>{getProviderOptionLabel(activePreset.providerKind)}</span>
-                            <Select.Icon asChild>
-                              <ChevronDownIcon />
-                            </Select.Icon>
-                          </Select.Trigger>
-                          <Select.Portal>
-                            <Select.Content
-                              className="select-content settings-select-content"
-                              position="popper"
-                            >
-                              <Select.Viewport>
-                                {PRESET_PROVIDER_OPTIONS.map((provider) => (
-                                  <Select.Item
-                                    key={provider.value}
-                                    value={provider.value}
-                                    className="select-item"
-                                  >
-                                    <Select.ItemText>{provider.label}</Select.ItemText>
-                                  </Select.Item>
-                                ))}
-                              </Select.Viewport>
-                            </Select.Content>
-                          </Select.Portal>
-                        </Select.Root>
-                      </div>
-
-                      {activePreset.providerKind === "openai-compatible" ? (
                         <div className="settings-item">
                           <Label.Root
                             className="settings-label type-field-label"
-                            htmlFor="preset-base-url"
+                            htmlFor="preset-provider-kind"
                           >
-                            Base URL
+                            Provider
                           </Label.Root>
-                          <input
-                            id="preset-base-url"
-                            className="input"
-                            placeholder="e.g. https://api.example.com/v1"
-                            value={activePreset.baseUrl || ""}
-                            onChange={(event) =>
+                          <Select.Root
+                            value={editingPreset.providerKind}
+                            onValueChange={(value) =>
                               onPresetChange({
-                                ...activePreset,
-                                baseUrl: event.target.value,
+                                ...editingPreset,
+                                providerKind: value as TranslationProviderKind,
                               })
                             }
-                          />
+                          >
+                            <Select.Trigger
+                              className="select-trigger"
+                              aria-label="Provider"
+                              id="preset-provider-kind"
+                            >
+                              <span>{getProviderOptionLabel(editingPreset.providerKind)}</span>
+                              <Select.Icon asChild>
+                                <ChevronDownIcon />
+                              </Select.Icon>
+                            </Select.Trigger>
+                            <Select.Portal>
+                              <Select.Content className="select-content settings-select-content" position="popper">
+                                <Select.Viewport>
+                                  {PRESET_PROVIDER_OPTIONS.map((provider) => (
+                                    <Select.Item
+                                      key={provider.value}
+                                      value={provider.value}
+                                      className="select-item"
+                                    >
+                                      <Select.ItemText>{provider.label}</Select.ItemText>
+                                    </Select.Item>
+                                  ))}
+                                </Select.Viewport>
+                              </Select.Content>
+                            </Select.Portal>
+                          </Select.Root>
                         </div>
-                      ) : null}
 
-                      <div className="settings-item">
-                        <div className="settings-inline-row">
-                          <Label.Root className="settings-label type-field-label" htmlFor="preset-api-key">
-                            API key
-                          </Label.Root>
-                          {apiKeySaved ? (
-                            <span className="settings-field-status status-ok">Saved</span>
+                        {editingPresetShowsBaseUrlField ? (
+                          <div className="settings-item">
+                            <Label.Root className="settings-label type-field-label" htmlFor="preset-base-url">
+                              Base URL
+                            </Label.Root>
+                            <input
+                              id="preset-base-url"
+                              className="input"
+                              placeholder={`e.g. ${getDefaultBaseUrlForProvider(editingPreset.providerKind) ?? "https://api.example.com/v1"}`}
+                              value={editingPreset.baseUrl || ""}
+                              onChange={(event) =>
+                                onPresetChange({
+                                  ...editingPreset,
+                                  baseUrl: event.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                        ) : null}
+
+                        {editingPresetShowsApiKeyField ? (
+                          <div className="settings-item">
+                            <div className="settings-inline-row">
+                              <Label.Root className="settings-label type-field-label" htmlFor="preset-api-key">
+                                API key
+                              </Label.Root>
+                              {editingPreset.apiKeyConfigured && !editingPresetApiKeyInput.trim() ? (
+                                <span className="settings-field-status status-ok">Saved</span>
+                              ) : null}
+                            </div>
+                            <input
+                              id="preset-api-key"
+                              className={editingPresetApiKeyState?.showsSavedMask ? "input input-masked" : "input"}
+                              type={editingPresetApiKeyState?.showsSavedMask ? "text" : "password"}
+                              placeholder={editingPresetApiKeyState?.placeholder}
+                              value={editingPresetApiKeyState?.displayValue ?? ""}
+                              onBlur={() => {
+                                void Promise.resolve(onPresetApiKeyBlur(editingPreset.id)).catch(() => {});
+                              }}
+                              onChange={(event) =>
+                                onPresetApiKeyInputChange(editingPreset.id, event.target.value)
+                              }
+                              onFocus={() => onPresetApiKeyFocus(editingPreset.id)}
+                            />
+                          </div>
+                        ) : null}
+
+                        <div className="settings-item">
+                          <div className="settings-inline-row">
+                            <Label.Root className="settings-label type-field-label" htmlFor="preset-model">
+                              Model
+                            </Label.Root>
+                            {editingPresetCanLoadModels ? (
+                              <button
+                                className="btn btn-ghost btn-small"
+                                disabled={presetModelsLoadingById[editingPreset.id]}
+                                onClick={() => {
+                                  void Promise.resolve(onFetchPresetModels(editingPreset.id)).catch(() => {});
+                                }}
+                                type="button"
+                              >
+                                {presetModelsLoadingById[editingPreset.id] ? "Loading..." : editingPresetModels.length > 0 ? "Reload" : "Load models"}
+                              </button>
+                            ) : (
+                              <span className="settings-inline-hint">{getModelLoadHint(editingPreset, editingPresetApiKeyInput)}</span>
+                            )}
+                          </div>
+
+                          <ModelCombobox
+                            id="preset-model"
+                            onChange={(value) =>
+                              onPresetChange({
+                                ...editingPreset,
+                                model: value,
+                              })
+                            }
+                            options={editingPresetModels}
+                            placeholder={`e.g. ${getDefaultModelForProvider(editingPreset.providerKind)}`}
+                            value={editingPreset.model}
+                          />
+                          {editingPresetModelMessage ? (
+                            <div className="settings-inline-hint settings-inline-hint-error">
+                              {editingPresetModelMessage}
+                            </div>
                           ) : null}
                         </div>
-                        <input
-                          id="preset-api-key"
-                          className={apiKeyFieldState?.showsSavedMask ? "input input-masked" : "input"}
-                          type={apiKeyFieldState?.showsSavedMask ? "text" : "password"}
-                          placeholder={apiKeyFieldState?.placeholder}
-                          value={apiKeyFieldState?.displayValue ?? ""}
-                          onBlur={() => {
-                            if (!presetApiKeyInput.trim()) {
-                              setApiKeyEditingPresetId((current) =>
-                                current === activePreset.id ? null : current
-                              );
-                            }
-                          }}
-                          onChange={(event) =>
-                            onPresetApiKeyInputChange(event.target.value)
-                          }
-                          onFocus={() => setApiKeyEditingPresetId(activePreset.id)}
-                        />
-                      </div>
 
-                      <div className="settings-item">
-                        <div className="settings-inline-row">
-                          <Label.Root className="settings-label type-field-label" htmlFor="preset-model">
-                            Model
-                          </Label.Root>
+                        <div className="settings-actions-row">
                           <button
-                            className="btn btn-ghost btn-small"
-                            disabled={!canFetchModels || presetModelsLoading}
-                            onClick={onFetchPresetModels}
-                            type="button"
-                          >
-                            {presetModelsLoading ? "Loading..." : "Load models"}
-                          </button>
-                        </div>
-
-                        <ModelCombobox
-                          id="preset-model"
-                          onChange={(value) =>
-                            onPresetChange({
-                              ...activePreset,
-                              model: value,
-                            })
-                          }
-                          options={fetchedModels}
-                          placeholder={modelPlaceholder}
-                          value={activePreset.model}
-                        />
-                      </div>
-
-                      <div className="settings-actions-row">
-                        {activePresetIsSaved && !presetSaving ? (
-                          <span className="settings-action-status status-ok">
-                            <CheckIcon />
-                            Saved
-                          </span>
-                        ) : (
-                          <button
-                            className="settings-save-action"
-                            disabled={presetSaving || !activePresetValidation?.isValid}
+                            className="btn btn-quiet-action"
+                            disabled={presetTestRunningId === editingPreset.id || !editingPresetValidation?.isValid}
                             onClick={() => {
-                              setApiKeyEditingPresetId(null);
-                              void Promise.resolve(onSaveSettings());
+                              void Promise.resolve(onTestPreset(editingPreset.id)).catch(() => {});
                             }}
                             type="button"
                           >
-                            {presetSaving ? "Saving..." : "Save"}
+                            {presetTestRunningId === editingPreset.id ? "Testing..." : "Test connection"}
                           </button>
-                        )}
-                        <button
-                          className="btn btn-quiet-action"
-                          disabled={presetTestRunning || !activePresetValidation?.isValid}
-                          onClick={onTestPreset}
-                          type="button"
-                        >
-                          Test
-                        </button>
-                        {presetTestRunning ? (
-                          <span
-                            aria-label="Testing in progress"
-                            className="settings-action-pending"
-                            title="Testing in progress"
+                          <button
+                            className="btn btn-quiet-action btn-danger-quiet"
+                            onClick={() => setPendingDeletePresetId(editingPreset.id)}
+                            type="button"
                           >
-                            <span className="settings-action-ellipsis" aria-hidden="true">
-                              <span />
-                              <span />
-                              <span />
-                            </span>
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {selectedPresetError ? (
-                        <div className="api-key-status">
-                          <span className="status-message">{selectedPresetError.message}</span>
+                            <TrashIcon />
+                            Delete
+                          </button>
                         </div>
-                      ) : null}
+
+                        {presetStatuses[editingPreset.id] && !presetStatuses[editingPreset.id]?.ok ? (
+                          <div className="api-key-status">
+                            <span className="status-message">
+                              {presetStatuses[editingPreset.id]?.message}
+                            </span>
+                          </div>
+                        ) : null}
+
+                        {editingPresetSaveStatus?.state === "error" ? (
+                          <div className="settings-inline-error-row" aria-live="polite">
+                            <span className="status-message">
+                              {editingPresetSaveStatus.detail ?? "Save failed."}
+                            </span>
+                            <button
+                              className="btn btn-small btn-quiet-action"
+                              onClick={() => {
+                                void Promise.resolve(onRetryPresetSave(editingPreset.id)).catch(() => {});
+                              }}
+                              type="button"
+                            >
+                              Retry save
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -661,20 +967,18 @@ export function SettingsDialogContent({
           )}
         </div>
       </div>
+
       <ConfirmationDialog
         actions={[
           {
             label: "Delete",
             variant: "danger",
             onSelect: () => {
-              if (!pendingDeletePreset) {
+              if (!pendingDeletePresetId) {
                 return;
               }
 
-              if (expandedPresetId === pendingDeletePreset.id) {
-                discardExpandedPreset();
-              }
-              onDeletePreset(pendingDeletePreset.id);
+              void Promise.resolve(onDeletePreset(pendingDeletePresetId)).catch(() => {});
               setPendingDeletePresetId(null);
             },
           },
@@ -693,6 +997,6 @@ export function SettingsDialogContent({
         open={Boolean(pendingDeletePreset)}
         title="Delete preset"
       />
-    </>
+    </Tooltip.Provider>
   );
 }
