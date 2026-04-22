@@ -1289,6 +1289,79 @@ body.is-resizing-split-y * {
   white-space: pre-wrap;
 }
 
+.pdf-segment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pdf-segment-alignment-note {
+  color: var(--ink-muted);
+  font-size: var(--type-size-meta);
+  line-height: 1.5;
+}
+
+.pdf-segment-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px 14px 13px;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.pdf-segment-card:hover,
+.pdf-segment-card.is-active {
+  border-color: var(--accent-muted);
+  background: var(--panel-muted);
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.08);
+}
+
+.pdf-segment-card-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pdf-segment-card .action-btn:disabled {
+  opacity: 0.45;
+}
+
+.pdf-segment-translation {
+  padding-right: 60px;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.pdf-segment-source-wrap {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.pdf-segment-source-label {
+  color: var(--ink-subtle);
+  font-size: var(--type-size-meta);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.pdf-segment-source {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .page-translation-empty {
   padding: 4px 0;
   font-family: var(--font-body);
