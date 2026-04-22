@@ -1,19 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildPresetLabel,
+  canPersistPresetDraft,
   createPresetDraft,
   createDefaultSettings,
   dedupePresetLabel,
   discardUnsavedPresetEdits,
   getPresetApiKeyFieldState,
+  getPresetMissingRequirement,
+  getPresetSaveStatus,
   getPresetValidationState,
   getNextThemeMode,
   getActivePreset,
+  getDefaultBaseUrlForProvider,
+  getDefaultModelForProvider,
+  hasPresetTranslationContext,
+  hasUsableLiveTranslationSetup,
   isPresetUnchangedFromSavedState,
   normalizeProviderKind,
   normalizeDefaultLanguage,
   normalizePresetDraft,
   normalizeSettingsFromStorage,
+  providerUsesApiKey,
+  providerUsesEditableBaseUrl,
   serializeProviderKindForCommand,
 } from "./appSettings";
 
@@ -25,6 +34,7 @@ describe("app settings helpers", () => {
     expect(buildPresetLabel("deepseek", "deepseek-chat")).toBe(
       "DeepSeek · deepseek-chat"
     );
+    expect(buildPresetLabel("ollama", "llama3.2")).toBe("Ollama · llama3.2");
   });
 
   test("adds a suffix when the generated preset label already exists", () => {
@@ -98,15 +108,35 @@ describe("app settings helpers", () => {
     expect(preset.label).toBe("Custom");
   });
 
+  test("starts a new ollama preset with the local default base url", () => {
+    const preset = createPresetDraft("ollama", []);
+
+    expect(preset.providerKind).toBe("ollama");
+    expect(preset.model).toBe("");
+    expect(preset.baseUrl).toBe("http://localhost:11434/v1");
+    expect(preset.label).toBe("Ollama");
+  });
+
+  test("uses openrouter/free as the OpenRouter default model", () => {
+    expect(getDefaultModelForProvider("openrouter")).toBe("openrouter/free");
+  });
+
+  test("uses llama3.2 as the Ollama model placeholder and local base url default", () => {
+    expect(getDefaultModelForProvider("ollama")).toBe("llama3.2");
+    expect(getDefaultBaseUrlForProvider("ollama")).toBe("http://localhost:11434/v1");
+  });
+
   test("normalizes legacy provider variants from storage", () => {
     expect(normalizeProviderKind("open-router")).toBe("openrouter");
     expect(normalizeProviderKind("deep-seek")).toBe("deepseek");
+    expect(normalizeProviderKind("ollama")).toBe("ollama");
     expect(normalizeProviderKind("open-ai-compatible")).toBe("openai-compatible");
   });
 
   test("serializes canonical provider kinds back to the backend command variants", () => {
     expect(serializeProviderKindForCommand("openrouter")).toBe("open-router");
     expect(serializeProviderKindForCommand("deepseek")).toBe("deep-seek");
+    expect(serializeProviderKindForCommand("ollama")).toBe("ollama");
     expect(serializeProviderKindForCommand("openai-compatible")).toBe(
       "open-ai-compatible"
     );
@@ -196,6 +226,133 @@ describe("app settings helpers", () => {
       model: true,
       provider: true,
     });
+
+    expect(
+      getPresetValidationState(
+        {
+          id: "preset-3",
+          label: "Ollama",
+          providerKind: "ollama",
+          model: "llama3.2",
+          baseUrl: "http://localhost:11434/v1",
+          apiKeyConfigured: false,
+        },
+        ""
+      )
+    ).toEqual({
+      apiKey: true,
+      baseUrl: true,
+      isValid: true,
+      model: true,
+      provider: true,
+    });
+  });
+
+  test("can persist provider credentials before a model is chosen", () => {
+    expect(
+      canPersistPresetDraft(
+        {
+          id: "preset-1",
+          label: "OpenRouter",
+          providerKind: "openrouter",
+          model: "",
+          apiKeyConfigured: true,
+        },
+        ""
+      )
+    ).toBe(true);
+
+    expect(
+      canPersistPresetDraft(
+        {
+          id: "preset-2",
+          label: "Custom",
+          providerKind: "openai-compatible",
+          model: "",
+          baseUrl: "https://example.com/v1",
+        },
+        "sk-test"
+      )
+    ).toBe(true);
+
+    expect(
+      canPersistPresetDraft(
+        {
+          id: "preset-3",
+          label: "Ollama",
+          providerKind: "ollama",
+          model: "",
+          baseUrl: "http://localhost:11434/v1",
+        },
+        ""
+      )
+    ).toBe(true);
+  });
+
+  test("knows Ollama uses an editable base url but not an api key", () => {
+    expect(providerUsesEditableBaseUrl("ollama")).toBe(true);
+    expect(providerUsesApiKey("ollama")).toBe(false);
+    expect(providerUsesApiKey("openrouter")).toBe(true);
+  });
+
+  test("surfaces the first missing setup requirement and save badge state", () => {
+    expect(
+      getPresetMissingRequirement(
+        {
+          id: "preset-1",
+          label: "Custom",
+          providerKind: "openai-compatible",
+          model: "",
+        },
+        ""
+      )
+    ).toBe("Add API key");
+
+    expect(
+      getPresetSaveStatus(
+        {
+          id: "preset-2",
+          label: "OpenRouter",
+          providerKind: "openrouter",
+          model: "",
+          apiKeyConfigured: true,
+        },
+        ""
+      )
+    ).toEqual({
+      state: "invalid",
+      detail: "Add model",
+    });
+  });
+
+  test("distinguishes cache context from full live translation setup", () => {
+    expect(
+      hasPresetTranslationContext({
+        id: "preset-1",
+        label: "OpenRouter · openrouter/free",
+        providerKind: "openrouter",
+        model: "openrouter/free",
+      })
+    ).toBe(true);
+
+    expect(
+      hasUsableLiveTranslationSetup({
+        id: "preset-1",
+        label: "OpenRouter · openrouter/free",
+        providerKind: "openrouter",
+        model: "openrouter/free",
+      })
+    ).toBe(false);
+
+    expect(
+      hasUsableLiveTranslationSetup({
+        id: "preset-1",
+        label: "OpenRouter · openrouter/free",
+        providerKind: "openrouter",
+        model: "openrouter/free",
+        apiKeyConfigured: true,
+      })
+    ).toBe(true);
   });
 
   test("shows a masked saved-key state until the field is actively edited", () => {

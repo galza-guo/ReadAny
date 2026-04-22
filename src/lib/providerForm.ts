@@ -1,5 +1,5 @@
 type ProviderFormLike = {
-  kind: "openrouter" | "deepseek" | "openai-compatible";
+  kind: "openrouter" | "deepseek" | "ollama" | "openai-compatible";
   baseUrl?: string;
   apiKey?: string;
   apiKeyConfigured?: boolean;
@@ -8,6 +8,10 @@ type ProviderFormLike = {
 export function canListModels(provider: ProviderFormLike) {
   if (provider.kind === "openrouter" || provider.kind === "deepseek") {
     return Boolean(provider.apiKey?.trim() || provider.apiKeyConfigured);
+  }
+
+  if (provider.kind === "ollama") {
+    return Boolean(provider.baseUrl?.trim());
   }
 
   return Boolean(

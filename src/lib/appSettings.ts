@@ -1,4 +1,5 @@
 import type {
+  PresetSaveStatus,
   TargetLanguage,
   ThemeMode,
   TranslationPreset,
@@ -28,6 +29,7 @@ export const PRESET_PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "openrouter", label: "OpenRouter" },
   { value: "deepseek", label: "DeepSeek" },
+  { value: "ollama", label: "Ollama" },
   { value: "openai-compatible", label: "OpenAI-Compatible" },
 ];
 
@@ -36,17 +38,20 @@ export const SAVED_API_KEY_MASK = "**************";
 const PROVIDER_LABELS: Record<TranslationProviderKind, string> = {
   openrouter: "OpenRouter",
   deepseek: "DeepSeek",
+  ollama: "Ollama",
   "openai-compatible": "Custom",
 };
 
 const DEFAULT_MODELS: Record<TranslationProviderKind, string> = {
-  openrouter: "openai/gpt-4o-mini",
+  openrouter: "openrouter/free",
   deepseek: "deepseek-chat",
+  ollama: "llama3.2",
   "openai-compatible": "gpt-4o-mini",
 };
 
 const DEFAULT_BASE_URLS: Partial<Record<TranslationProviderKind, string>> = {
   deepseek: "https://api.deepseek.com",
+  ollama: "http://localhost:11434/v1",
 };
 
 type LanguageLike = {
@@ -66,6 +71,7 @@ type AppSettingsLike<TPreset extends PresetLike> = {
 const LEGACY_PROVIDER_KIND_BY_CANONICAL: Record<TranslationProviderKind, string> = {
   openrouter: "open-router",
   deepseek: "deep-seek",
+  ollama: "ollama",
   "openai-compatible": "open-ai-compatible",
 };
 
@@ -74,9 +80,21 @@ const CANONICAL_PROVIDER_KIND_BY_VARIANT: Record<string, TranslationProviderKind
   "open-router": "openrouter",
   deepseek: "deepseek",
   "deep-seek": "deepseek",
+  ollama: "ollama",
   "openai-compatible": "openai-compatible",
   "open-ai-compatible": "openai-compatible",
 };
+
+const PROVIDERS_WITH_API_KEYS = new Set<TranslationProviderKind>([
+  "openrouter",
+  "deepseek",
+  "openai-compatible",
+]);
+
+const PROVIDERS_WITH_EDITABLE_BASE_URLS = new Set<TranslationProviderKind>([
+  "ollama",
+  "openai-compatible",
+]);
 
 export function normalizeProviderKind(
   providerKind?: TranslationProviderKind | string
@@ -106,6 +124,7 @@ export function normalizeSettingsFromStorage(
 ): TranslationSettings {
   return {
     ...settings,
+    autoFallbackEnabled: Boolean(settings.autoFallbackEnabled),
     presets: settings.presets.map(normalizePresetFromStorage),
   };
 }
@@ -196,6 +215,24 @@ export function getDefaultModelForProvider(providerKind: TranslationProviderKind
   return DEFAULT_MODELS[normalizeProviderKind(providerKind)];
 }
 
+export function getDefaultBaseUrlForProvider(
+  providerKind: TranslationProviderKind
+) {
+  return DEFAULT_BASE_URLS[normalizeProviderKind(providerKind)];
+}
+
+export function providerUsesApiKey(providerKind: TranslationProviderKind | string) {
+  return PROVIDERS_WITH_API_KEYS.has(normalizeProviderKind(providerKind));
+}
+
+export function providerUsesEditableBaseUrl(
+  providerKind: TranslationProviderKind | string
+) {
+  return PROVIDERS_WITH_EDITABLE_BASE_URLS.has(
+    normalizeProviderKind(providerKind)
+  );
+}
+
 export function getProviderOptionLabel(providerKind: TranslationProviderKind) {
   const normalizedProviderKind = normalizeProviderKind(providerKind);
   return (
@@ -212,8 +249,11 @@ export function getPresetValidationState(
   const provider = Boolean(normalizedProviderKind);
   const model = Boolean(preset.model.trim());
   const baseUrl =
-    normalizedProviderKind !== "openai-compatible" || Boolean(preset.baseUrl?.trim());
-  const apiKey = Boolean(apiKeyInput.trim() || preset.apiKeyConfigured);
+    !providerUsesEditableBaseUrl(normalizedProviderKind) ||
+    Boolean(preset.baseUrl?.trim());
+  const apiKey =
+    !providerUsesApiKey(normalizedProviderKind) ||
+    Boolean(apiKeyInput.trim() || preset.apiKeyConfigured);
 
   return {
     provider,
@@ -222,6 +262,68 @@ export function getPresetValidationState(
     apiKey,
     isValid: provider && model && baseUrl && apiKey,
   };
+}
+
+export function canPersistPresetDraft(
+  preset: TranslationPreset,
+  apiKeyInput: string
+) {
+  const validation = getPresetValidationState(preset, apiKeyInput);
+  return validation.provider && validation.baseUrl && validation.apiKey;
+}
+
+export function getPresetMissingRequirement(
+  preset: TranslationPreset,
+  apiKeyInput: string
+) {
+  const validation = getPresetValidationState(preset, apiKeyInput);
+
+  if (!validation.apiKey) {
+    return "Add API key";
+  }
+
+  if (!validation.baseUrl) {
+    return "Add Base URL";
+  }
+
+  if (!validation.model) {
+    return "Add model";
+  }
+
+  return undefined;
+}
+
+export function getPresetSaveStatus(
+  preset: TranslationPreset,
+  apiKeyInput: string
+): PresetSaveStatus {
+  const validation = getPresetValidationState(preset, apiKeyInput);
+  const detail = getPresetMissingRequirement(preset, apiKeyInput);
+
+  if (validation.isValid) {
+    return { state: "saved" };
+  }
+
+  return {
+    state: "invalid",
+    detail,
+  };
+}
+
+export function hasPresetTranslationContext(
+  preset?: TranslationPreset
+) {
+  return Boolean(preset?.id.trim() && preset.model.trim());
+}
+
+export function hasUsableLiveTranslationSetup(
+  preset?: TranslationPreset
+) {
+  if (!preset) {
+    return false;
+  }
+
+  return getPresetValidationState(preset, "").isValid;
 }
 
 export function getPresetApiKeyFieldState({
@@ -322,10 +424,17 @@ export function normalizePresetDraft(
     providerKind,
     label: dedupePresetLabel(nextLabel, otherLabels),
     model: normalizedModel,
-    baseUrl:
-      providerKind === "openai-compatible"
-        ? preset.baseUrl?.trim() || undefined
-        : DEFAULT_BASE_URLS[providerKind],
+    baseUrl: (() => {
+      if (providerKind === "openrouter") {
+        return undefined;
+      }
+
+      if (providerKind === "deepseek") {
+        return DEFAULT_BASE_URLS[providerKind];
+      }
+
+      return preset.baseUrl?.trim() || DEFAULT_BASE_URLS[providerKind];
+    })(),
   };
 }
 
@@ -350,6 +459,7 @@ export function createPresetDraft(
 export function createDefaultSettings(): TranslationSettings {
   return {
     activePresetId: "",
+    autoFallbackEnabled: false,
     defaultLanguage: DEFAULT_LANGUAGE,
     theme: DEFAULT_THEME,
     presets: [],

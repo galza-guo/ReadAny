@@ -1,5 +1,6 @@
 import type { PageDoc, PageTranslationState } from "../types";
 import { hasUsablePageText } from "./pageText";
+import { isPdfPageFullyTranslated } from "./pdfSegments";
 
 type PageTranslationProgressArgs = {
   pages: PageDoc[];
@@ -22,6 +23,13 @@ type DequeueNextPageArgs = {
 
 type DequeueNextPageResult = {
   page: number | null;
+  foregroundQueue: number[];
+  backgroundQueue: number[];
+};
+
+type ShouldContinueQueuedPageTranslationsArgs = {
+  didError: boolean;
+  isTranslateAllRunning: boolean;
   foregroundQueue: number[];
   backgroundQueue: number[];
 };
@@ -98,6 +106,19 @@ export function dequeueNextPage({
   };
 }
 
+export function shouldContinueQueuedPageTranslations({
+  didError,
+  isTranslateAllRunning,
+  foregroundQueue,
+  backgroundQueue,
+}: ShouldContinueQueuedPageTranslationsArgs) {
+  if (didError && isTranslateAllRunning) {
+    return false;
+  }
+
+  return foregroundQueue.length > 0 || backgroundQueue.length > 0;
+}
+
 export function getPageTranslationProgress({
   pages,
   pageTranslations,
@@ -107,7 +128,11 @@ export function getPageTranslationProgress({
   const translatablePages = pages.filter((page) => hasUsablePageText(getPageSourceText(page)));
   const translatedPages = translatablePages.filter((page) => {
     const translation = pageTranslations[page.page];
-    return cachedPageSet.has(page.page) || translation?.status === "done";
+    return (
+      isPdfPageFullyTranslated(page) ||
+      cachedPageSet.has(page.page) ||
+      translation?.status === "done"
+    );
   });
 
   return {

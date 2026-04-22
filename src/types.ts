@@ -32,7 +32,11 @@ export type TargetLanguage = {
 
 export type ThemeMode = "system" | "light" | "dark";
 
-export type TranslationProviderKind = "openrouter" | "deepseek" | "openai-compatible";
+export type TranslationProviderKind =
+  | "openrouter"
+  | "deepseek"
+  | "ollama"
+  | "openai-compatible";
 
 export type TranslationPreset = {
   id: string;
@@ -53,9 +57,19 @@ export type TranslationProvidersState = {
 
 export type TranslationSettings = {
   activePresetId: string;
+  autoFallbackEnabled: boolean;
   defaultLanguage: TargetLanguage;
   theme: ThemeMode;
   presets: TranslationPreset[];
+};
+
+export type TranslationFallbackTrace = {
+  requestedPresetId: string;
+  finalPresetId: string;
+  usedFallback: boolean;
+  attemptedPresetIds: string[];
+  attemptCount: number;
+  lastError?: string;
 };
 
 export type PresetTestResult = {
@@ -63,6 +77,20 @@ export type PresetTestResult = {
   label: string;
   ok: boolean;
   message: string;
+  detail?: string;
+};
+
+export type PresetSaveState =
+  | "pristine"
+  | "dirty"
+  | "saving"
+  | "saved"
+  | "invalid"
+  | "error";
+
+export type PresetSaveStatus = {
+  state: PresetSaveState;
+  detail?: string;
 };
 
 export type PageTranslationState = {
@@ -71,15 +99,45 @@ export type PageTranslationState = {
   previousContext: string;
   nextContext: string;
   translatedText?: string;
-  status: "idle" | "loading" | "done" | "error" | "unavailable";
+  status:
+    | "idle"
+    | "queued"
+    | "loading"
+    | "done"
+    | "error"
+    | "unavailable"
+    | "setup-required";
   isCached?: boolean;
+  activityMessage?: string;
   error?: string;
+  errorChecks?: string[];
+  fallbackTrace?: TranslationFallbackTrace;
 };
 
 export type PageTranslationResult = {
   page: number;
   translatedText: string;
   isCached: boolean;
+  fallbackTrace: TranslationFallbackTrace;
+};
+
+export type BatchTranslationResult = {
+  results: Array<{
+    sid: string;
+    translation: string;
+  }>;
+  fallbackTrace: TranslationFallbackTrace;
+};
+
+export type SelectionTranslationResult = {
+  translation: string;
+  fallbackTrace: TranslationFallbackTrace;
+};
+
+export type WordLookupResult = {
+  phonetic?: string;
+  definitions: WordDefinition[];
+  fallbackTrace: TranslationFallbackTrace;
 };
 
 export type SelectionTranslation = {
@@ -112,7 +170,7 @@ export type VocabularyEntry = {
 };
 
 // Book/Library types
-export type FileType = 'pdf' | 'epub';
+export type FileType = "pdf" | "epub";
 
 export type RecentBook = {
   id: string;
@@ -131,7 +189,7 @@ export type RecentBook = {
 // Chat types
 export type ChatMessage = {
   id: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   timestamp: string;
 };

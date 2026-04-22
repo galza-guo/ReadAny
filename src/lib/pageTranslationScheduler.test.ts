@@ -7,6 +7,7 @@ import {
   getEpubSectionTranslationProgress,
   getFullBookActionLabel,
   getPageTranslationProgress,
+  shouldContinueQueuedPageTranslations,
   isRequestVersionCurrent,
   bumpRequestVersion,
 } from "./pageTranslationScheduler";
@@ -40,6 +41,28 @@ describe("pageTranslationScheduler queues", () => {
       foregroundQueue: [5],
       backgroundQueue: [6],
     });
+  });
+
+  test("stops the translate-all queue after the first page error", () => {
+    expect(
+      shouldContinueQueuedPageTranslations({
+        didError: true,
+        isTranslateAllRunning: true,
+        foregroundQueue: [8],
+        backgroundQueue: [9, 10],
+      })
+    ).toBe(false);
+  });
+
+  test("keeps regular queued work moving when the failure was outside translate-all", () => {
+    expect(
+      shouldContinueQueuedPageTranslations({
+        didError: true,
+        isTranslateAllRunning: false,
+        foregroundQueue: [8],
+        backgroundQueue: [],
+      })
+    ).toBe(true);
   });
 });
 
