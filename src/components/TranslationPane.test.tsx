@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import appCss from "../App.css?raw";
 import type { PageDoc, PageTranslationState } from "../types";
+import { ToastProvider } from "./toast/ToastProvider";
 import { TranslationPane } from "./TranslationPane";
 
 function buildPdfPage(overrides: Partial<PageDoc> = {}): PageDoc {
@@ -33,58 +34,66 @@ function renderPdfPane(options: {
   bulkActionLabel?: string;
   bulkActionRunning?: boolean;
   canRetryPage?: boolean;
+  activePid?: string | null;
+  hoverPid?: string | null;
 } = {}) {
   const page = options.page ?? buildPdfPage();
 
   return renderToStaticMarkup(
-    <TranslationPane
-      mode="pdf"
-      currentPage={3}
-      page={page}
-      pageTranslation={
-        options.pageTranslation ?? {
-          page: 3,
-          displayText: "Original paragraph text.",
-          previousContext: "",
-          nextContext: "",
-          translatedText: "Translated paragraph text.",
-          status: "done",
+    <ToastProvider>
+      <TranslationPane
+        mode="pdf"
+        currentPage={3}
+        page={page}
+        pageTranslation={
+          options.pageTranslation ?? {
+            page: 3,
+            displayText: "Original paragraph text.",
+            previousContext: "",
+            nextContext: "",
+            translatedText: "Translated paragraph text.",
+            status: "done",
+          }
         }
-      }
-      loadingMessage={options.loadingMessage}
-      setupRequired={options.setupRequired}
-      progressLabel={options.progressLabel}
-      progressDetailLabel={options.progressDetailLabel}
-      progressDetailState={options.progressDetailState}
-      bulkActionLabel={options.bulkActionLabel ?? "Translate All"}
-      onBulkAction={() => {}}
-      bulkActionDisabled={false}
-      bulkActionRunning={options.bulkActionRunning ?? false}
-      onOpenSettings={() => {}}
-      onRetryPage={() => {}}
-      canRetryPage={options.canRetryPage ?? true}
-      activePid={null}
-      hoverPid={null}
-      onHoverPid={() => {}}
-      onLocatePid={() => {}}
-      selectionTranslation={null}
-      onClearSelectionTranslation={() => {}}
-    />,
+        loadingMessage={options.loadingMessage}
+        setupRequired={options.setupRequired}
+        progressLabel={options.progressLabel}
+        progressDetailLabel={options.progressDetailLabel}
+        progressDetailState={options.progressDetailState}
+        bulkActionLabel={options.bulkActionLabel ?? "Translate All"}
+        onBulkAction={() => {}}
+        bulkActionDisabled={false}
+        bulkActionRunning={options.bulkActionRunning ?? false}
+        onOpenSettings={() => {}}
+        onRetryPage={() => {}}
+        canRetryPage={options.canRetryPage ?? true}
+        activePid={options.activePid ?? null}
+        hoverPid={options.hoverPid ?? null}
+        onHoverPid={() => {}}
+        onLocatePid={() => {}}
+        selectionTranslation={null}
+        onClearSelectionTranslation={() => {}}
+      />
+    </ToastProvider>,
   );
 }
 
 describe("TranslationPane", () => {
-  test("renders PDF segments translation-first while keeping original text on demand", () => {
+  test("renders PDF segments without the old eye and locate controls", () => {
     const html = renderPdfPane();
 
     expect(html).toContain("pdf-segment-card");
+    expect(html).toContain("pdf-segment-surface");
     expect(html).toContain("Translated paragraph text.");
-    expect(html).not.toContain("Original paragraph text.");
-    expect(html).toContain('aria-label="Show original text"');
-    expect(html).toContain('aria-label="Locate in document"');
+    expect(html).toContain("pdf-segment-source-reveal");
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('aria-label="Copy translation"');
+    expect(html).not.toContain('aria-label="Show original text"');
+    expect(html).not.toContain('aria-label="Locate in document"');
+    expect(html).not.toContain("Copy selected");
   });
 
-  test("shows a coarse alignment note and disables locate when rects are unavailable", () => {
+  test("shows a coarse alignment note when rects are unavailable", () => {
     const html = renderPdfPane({
       page: buildPdfPage({
         paragraphs: [
@@ -101,8 +110,15 @@ describe("TranslationPane", () => {
     });
 
     expect(html).toContain("Highlights may be approximate on this page.");
-    expect(html).toContain('aria-label="Precise PDF location unavailable"');
-    expect(html).toContain("disabled");
+    expect(html).toContain('aria-label="Copy translation"');
+  });
+
+  test("reveals the original text and its copy control for the active segment", () => {
+    const html = renderPdfPane({ activePid: "p-1" });
+
+    expect(html).toContain("Original paragraph text.");
+    expect(html).toContain('aria-label="Copy original text"');
+    expect(html).toContain("pdf-segment-source-reveal is-visible");
   });
 
   test("renders footer progress beside the bulk action", () => {
@@ -222,25 +238,27 @@ describe("TranslationPane", () => {
 
   test("keeps the shared translation header in EPUB mode", () => {
     const html = renderToStaticMarkup(
-      <TranslationPane
-        mode="epub"
-        pages={[]}
-        currentPage={4}
-        bulkActionLabel="Translate All"
-        onBulkAction={() => {}}
-        bulkActionDisabled={false}
-        bulkActionRunning={false}
-        onOpenSettings={() => {}}
-        activePid={null}
-        hoverPid={null}
-        onHoverPid={() => {}}
-        onTranslatePid={() => {}}
-        onLocatePid={() => {}}
-        onTranslateText={() => {}}
-        wordTranslation={null}
-        onClearWordTranslation={() => {}}
-        scrollToPage={null}
-      />,
+      <ToastProvider>
+        <TranslationPane
+          mode="epub"
+          pages={[]}
+          currentPage={4}
+          bulkActionLabel="Translate All"
+          onBulkAction={() => {}}
+          bulkActionDisabled={false}
+          bulkActionRunning={false}
+          onOpenSettings={() => {}}
+          activePid={null}
+          hoverPid={null}
+          onHoverPid={() => {}}
+          onTranslatePid={() => {}}
+          onLocatePid={() => {}}
+          onTranslateText={() => {}}
+          wordTranslation={null}
+          onClearWordTranslation={() => {}}
+          scrollToPage={null}
+        />
+      </ToastProvider>,
     );
 
     expect(html).toContain(">Translation<");

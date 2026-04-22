@@ -7,6 +7,7 @@ import {
   getTranslatablePdfParagraphs,
 } from "../lib/pdfSegments";
 import { getFriendlyProviderError } from "../lib/providerErrors";
+import { useToast } from "./toast/ToastProvider";
 import { ExpandableIconButton } from "./reader/ExpandableIconButton";
 import type {
   PageDoc,
@@ -17,7 +18,6 @@ import type {
 } from "../types";
 
 type TranslationPaneChromeProps = {
-  statusMessage?: string | null;
   progressLabel?: string | null;
   progressDetailLabel?: string | null;
   progressDetailState?: "running" | "stopping" | null;
@@ -34,7 +34,6 @@ type PdfTranslationPaneProps = {
   pageTranslation?: PageTranslationState;
   loadingMessage?: string | null;
   setupRequired?: boolean;
-  statusMessage?: string | null;
   progressLabel?: string | null;
   progressDetailLabel?: string | null;
   progressDetailState?: "running" | "stopping" | null;
@@ -58,7 +57,6 @@ type EpubTranslationPaneProps = {
   pages: PageDoc[];
   currentPage: number;
   setupRequired?: boolean;
-  statusMessage?: string | null;
   progressLabel?: string | null;
   progressDetailLabel?: string | null;
   progressDetailState?: "running" | "stopping" | null;
@@ -155,7 +153,7 @@ function RetryIcon() {
   );
 }
 
-function OriginalIcon({ revealed }: { revealed: boolean }) {
+function CopyIcon() {
   return (
     <svg
       width="16"
@@ -167,21 +165,77 @@ function OriginalIcon({ revealed }: { revealed: boolean }) {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      {revealed ? (
-        <>
-          <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-5 0-9.27-3.11-11-8 0-1.1.27-2.16.77-3.09" />
-          <path d="M1 1l22 22" />
-          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c5 0 9.27 3.11 11 8a10.96 10.96 0 0 1-4.08 5.4" />
-          <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-        </>
-      ) : (
-        <>
-          <path d="M2.06 12C3.79 7.11 8.06 4 13.06 4s9.27 3.11 11 8c-1.73 4.89-6 8-11 8s-9.27-3.11-11-8z" />
-          <circle cx="13.06" cy="12" r="3" />
-        </>
-      )}
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
     </svg>
   );
+}
+
+async function copyTextToClipboard(text: string) {
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.clipboard &&
+    typeof navigator.clipboard.writeText === "function"
+  ) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document !== "undefined") {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "fixed";
+    textArea.style.opacity = "0";
+    textArea.style.pointerEvents = "none";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textArea);
+
+    if (copied) {
+      return;
+    }
+  }
+
+  throw new Error("Clipboard access is unavailable.");
+}
+
+type SelectedCopyMode = "translation" | "original" | "both";
+
+function getCopyableTranslation(para: Paragraph) {
+  if (para.status !== "done") {
+    return "";
+  }
+
+  return para.translation?.trim() ?? "";
+}
+
+function buildSelectedCopyText(
+  paragraphs: Paragraph[],
+  mode: SelectedCopyMode,
+) {
+  const blocks = paragraphs
+    .map((para) => {
+      const translation = getCopyableTranslation(para);
+      const original = para.source.trim();
+
+      if (mode === "translation") {
+        return translation;
+      }
+
+      if (mode === "original") {
+        return original;
+      }
+
+      return [translation, original].filter(Boolean).join("\n");
+    })
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return blocks.join("\n\n").trim();
 }
 
 function TranslationSetupPrompt({
@@ -205,19 +259,32 @@ function TranslationSetupPrompt({
 
 const PdfSegmentCard = memo(function PdfSegmentCard({
   para,
-  pageNum,
   isActive,
+  isSelected,
   onHoverPid,
-  onLocatePid,
+  onSelect,
+  onCopyText,
 }: {
   para: Paragraph;
-  pageNum: number;
   isActive: boolean;
+  isSelected: boolean;
   onHoverPid: (pid: string | null) => void;
-  onLocatePid: (pid: string, page: number) => void;
+  onSelect: (pid: string, event: React.MouseEvent<HTMLElement>) => void;
+  onCopyText: (text: string, label: string) => void;
 }) {
-  const [sourceRevealed, setSourceRevealed] = useState(false);
-  const canLocate = para.rects.length > 0;
+  const [isHovered, setIsHovered] = useState(false);
+  const [hasFocusWithin, setHasFocusWithin] = useState(false);
+  const [hoveredSection, setHoveredSection] = useState<
+    "translation" | "source" | null
+  >(null);
+  const showInlineActions =
+    isHovered || isActive || isSelected || hasFocusWithin;
+  const sourceVisible = showInlineActions;
+  const showTranslationCopy = hoveredSection === "translation";
+  const showSourceCopy = hoveredSection === "source";
+  const canCopyTranslation =
+    para.status === "done" && Boolean(para.translation?.trim());
+  const canCopySource = Boolean(para.source.trim());
 
   let translationText = para.translation?.trim() ?? "";
   if (para.status === "loading") {
@@ -230,57 +297,100 @@ const PdfSegmentCard = memo(function PdfSegmentCard({
 
   return (
     <article
-      className={`pdf-segment-card ${isActive ? "is-active" : ""}`}
-      onMouseEnter={() => onHoverPid(para.pid)}
-      onMouseLeave={() => onHoverPid(null)}
-      onClick={() => {
-        if (canLocate) {
-          onLocatePid(para.pid, pageNum);
+      className={`pdf-segment-card ${
+        isActive && !isHovered ? "is-linked-active" : ""
+      } ${
+        isSelected ? "is-selected" : ""
+      }`}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        onHoverPid(para.pid);
+      }}
+      onMouseLeave={() => {
+        setIsHovered(false);
+        setHoveredSection(null);
+        onHoverPid(null);
+      }}
+      onFocusCapture={() => {
+        setHasFocusWithin(true);
+        onHoverPid(para.pid);
+      }}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget;
+
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setHasFocusWithin(false);
+          setHoveredSection(null);
+          onHoverPid(null);
         }
       }}
+      onClick={(event) => onSelect(para.pid, event)}
     >
-      <div className="pdf-segment-card-actions">
-        <button
-          className="action-btn"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            setSourceRevealed((current) => !current);
-          }}
-          title={sourceRevealed ? "Hide original text" : "Show original text"}
-          aria-label={sourceRevealed ? "Hide original text" : "Show original text"}
-        >
-          <OriginalIcon revealed={sourceRevealed} />
-        </button>
-        <button
-          className="action-btn"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onLocatePid(para.pid, pageNum);
-          }}
-          title={
-            canLocate
-              ? "Locate in document"
-              : "Precise PDF location unavailable"
+      <div className="pdf-segment-surface">
+        <div
+          className={`pdf-segment-row pdf-segment-row--translation ${
+            showTranslationCopy ? "is-copy-hovered" : ""
+          }`}
+          onMouseEnter={() => setHoveredSection("translation")}
+          onMouseLeave={() =>
+            setHoveredSection((current) =>
+              current === "translation" ? null : current,
+            )
           }
-          aria-label={
-            canLocate
-              ? "Locate in document"
-              : "Precise PDF location unavailable"
-          }
-          disabled={!canLocate}
         >
-          <LocateIcon />
-        </button>
-      </div>
-      <div className="pdf-segment-translation">{translationText}</div>
-      {sourceRevealed ? (
-        <div className="pdf-segment-source-wrap">
-          <div className="pdf-segment-source-label">Original</div>
-          <div className="pdf-segment-source">{para.source}</div>
+          <div className="pdf-segment-translation">{translationText}</div>
+          <button
+            className="pdf-segment-copy-btn"
+            type="button"
+            disabled={!canCopyTranslation}
+            tabIndex={showTranslationCopy ? 0 : -1}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCopyText(para.translation?.trim() ?? "", "Translation");
+            }}
+            title="Copy translation"
+            aria-label="Copy translation"
+          >
+            <CopyIcon />
+          </button>
         </div>
-      ) : null}
+        <div
+          className={`pdf-segment-source-reveal ${
+            sourceVisible ? "is-visible" : ""
+          }`}
+          aria-hidden={!sourceVisible}
+        >
+          <div className="pdf-segment-source-reveal-inner">
+            <div
+              className={`pdf-segment-row pdf-segment-row--source ${
+                showSourceCopy ? "is-copy-hovered" : ""
+              }`}
+              onMouseEnter={() => setHoveredSection("source")}
+              onMouseLeave={() =>
+                setHoveredSection((current) =>
+                  current === "source" ? null : current,
+                )
+              }
+            >
+              <div className="pdf-segment-source">{para.source}</div>
+              <button
+                className="pdf-segment-copy-btn"
+                type="button"
+                disabled={!canCopySource || !sourceVisible}
+                tabIndex={showSourceCopy ? 0 : -1}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCopyText(para.source, "Original text");
+                }}
+                title="Copy original text"
+                aria-label="Copy original text"
+              >
+                <CopyIcon />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </article>
   );
 });
@@ -483,7 +593,6 @@ function PdfTranslationPane({
   pageTranslation,
   loadingMessage,
   setupRequired = false,
-  statusMessage,
   progressLabel,
   progressDetailLabel,
   progressDetailState,
@@ -497,10 +606,13 @@ function PdfTranslationPane({
   activePid,
   hoverPid,
   onHoverPid,
-  onLocatePid,
+  onLocatePid: _onLocatePid,
   selectionTranslation,
   onClearSelectionTranslation,
 }: Omit<PdfTranslationPaneProps, "mode">) {
+  const { showToast } = useToast();
+  const [selectedPids, setSelectedPids] = useState<string[]>([]);
+  const selectionAnchorIndexRef = useRef<number | null>(null);
   const resolvedLoadingMessage =
     loadingMessage ??
     pageTranslation?.activityMessage ??
@@ -517,6 +629,162 @@ function PdfTranslationPane({
   const resolvedErrorMessage = pageTranslation?.fallbackTrace?.lastError
     ? getFriendlyProviderError(pageTranslation.fallbackTrace.lastError).message
     : pageTranslation?.error;
+  const paragraphSelectionKey = translatableParagraphs
+    .map((para) => para.pid)
+    .join("|");
+  const selectedPidSet = new Set(selectedPids);
+  const selectedParagraphs = translatableParagraphs.filter((para) =>
+    selectedPidSet.has(para.pid),
+  );
+
+  useEffect(() => {
+    setSelectedPids([]);
+    selectionAnchorIndexRef.current = null;
+  }, [currentPage, paragraphSelectionKey]);
+
+  useEffect(() => {
+    if (selectedPids.length === 0) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (
+        target.closest(".pdf-segment-card") ||
+        target.closest(".translation-pane-selection-overlay")
+      ) {
+        return;
+      }
+
+      setSelectedPids([]);
+      selectionAnchorIndexRef.current = null;
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [selectedPids.length]);
+
+  const handleCopyText = useCallback(
+    (text: string, label: string) => {
+      const trimmedText = text.trim();
+
+      if (!trimmedText) {
+        return;
+      }
+
+      void copyTextToClipboard(trimmedText)
+        .then(() => {
+          showToast({
+            message: `${label} copied.`,
+            tone: "success",
+            durationMs: 1800,
+          });
+        })
+        .catch(() => {
+          showToast({
+            message: `Couldn't copy ${label.toLowerCase()}.`,
+            detail: "Clipboard access is unavailable right now.",
+            tone: "error",
+          });
+        });
+    },
+    [showToast],
+  );
+  const handleSelectPid = useCallback(
+    (pid: string, event: React.MouseEvent<HTMLElement>) => {
+      const clickedIndex = translatableParagraphs.findIndex(
+        (para) => para.pid === pid,
+      );
+
+      if (clickedIndex < 0) {
+        return;
+      }
+
+      const isToggle = event.metaKey || event.ctrlKey;
+      const isRange = event.shiftKey;
+      const anchorIndex = selectionAnchorIndexRef.current ?? clickedIndex;
+      let nextSelected: string[];
+
+      if (isRange) {
+        const next = new Set<string>(isToggle ? selectedPids : []);
+        const start = Math.min(anchorIndex, clickedIndex);
+        const end = Math.max(anchorIndex, clickedIndex);
+
+        if (!isToggle) {
+          next.clear();
+        }
+
+        for (let index = start; index <= end; index += 1) {
+          next.add(translatableParagraphs[index].pid);
+        }
+
+        nextSelected = translatableParagraphs
+          .map((para) => para.pid)
+          .filter((currentPid) => next.has(currentPid));
+      } else if (isToggle) {
+        const next = new Set<string>(selectedPids);
+
+        selectionAnchorIndexRef.current = clickedIndex;
+
+        if (next.has(pid)) {
+          next.delete(pid);
+        } else {
+          next.add(pid);
+        }
+
+        nextSelected = translatableParagraphs
+          .map((para) => para.pid)
+          .filter((currentPid) => next.has(currentPid));
+      } else {
+        selectionAnchorIndexRef.current = clickedIndex;
+        nextSelected = [pid];
+      }
+
+      if (isRange && selectionAnchorIndexRef.current === null) {
+        selectionAnchorIndexRef.current = clickedIndex;
+      }
+
+      setSelectedPids(nextSelected);
+    },
+    [selectedPids, translatableParagraphs],
+  );
+  const handleCopySelected = useCallback(
+    (mode: SelectedCopyMode) => {
+      const text = buildSelectedCopyText(selectedParagraphs, mode);
+
+      if (!text) {
+        showToast({
+          message:
+            mode === "translation"
+              ? "The selected translation is not ready yet."
+              : mode === "original"
+                ? "There is no original text to copy."
+                : "There is nothing ready to copy in this selection.",
+          tone: "neutral",
+          durationMs: 2200,
+        });
+        return;
+      }
+
+      const label =
+        mode === "translation"
+          ? "Selected translation"
+          : mode === "original"
+            ? "Selected original text"
+            : "Selected text";
+
+      handleCopyText(text, label);
+    },
+    [handleCopyText, selectedParagraphs, showToast],
+  );
 
   return (
     <div className="translation-pane page-translation-pane">
@@ -546,15 +814,37 @@ function PdfTranslationPane({
               </span>
             ) : null}
           </div>
-          {statusMessage ? (
-            <div
-              className="translation-pane-status rail-pane-meta"
-              aria-live="polite"
-            >
-              {statusMessage}
-            </div>
-          ) : null}
         </div>
+        {selectedParagraphs.length > 1 ? (
+          <div
+            className="translation-pane-selection-overlay"
+            role="toolbar"
+            aria-label="Copy selected passages"
+          >
+            <span className="pdf-selection-toolbar-label">Copy selected</span>
+            <button
+              className="pdf-selection-toolbar-btn"
+              type="button"
+              onClick={() => handleCopySelected("translation")}
+            >
+              translation
+            </button>
+            <button
+              className="pdf-selection-toolbar-btn"
+              type="button"
+              onClick={() => handleCopySelected("original")}
+            >
+              original
+            </button>
+            <button
+              className="pdf-selection-toolbar-btn"
+              type="button"
+              onClick={() => handleCopySelected("both")}
+            >
+              both
+            </button>
+          </div>
+        ) : null}
         <div className="page-translation-actions rail-pane-header-actions">
           <ExpandableIconButton
             type="button"
@@ -612,10 +902,11 @@ function PdfTranslationPane({
                 <PdfSegmentCard
                   key={para.pid}
                   para={para}
-                  pageNum={currentPage}
                   isActive={para.pid === activePid || para.pid === hoverPid}
+                  isSelected={selectedPidSet.has(para.pid)}
                   onHoverPid={onHoverPid}
-                  onLocatePid={onLocatePid}
+                  onSelect={handleSelectPid}
+                  onCopyText={handleCopyText}
                 />
               ))}
             </div>
@@ -690,7 +981,6 @@ function EpubTranslationPane({
   pages,
   currentPage: _currentPage,
   setupRequired = false,
-  statusMessage,
   progressLabel,
   progressDetailLabel,
   progressDetailState,
@@ -737,14 +1027,6 @@ function EpubTranslationPane({
           <div className="rail-pane-title-row">
             <span className="rail-pane-title">Translation</span>
           </div>
-          {statusMessage ? (
-            <div
-              className="translation-pane-status rail-pane-meta"
-              aria-live="polite"
-            >
-              {statusMessage}
-            </div>
-          ) : null}
         </div>
       </div>
       {setupRequired ? (
@@ -839,7 +1121,6 @@ export function TranslationPane(props: TranslationPaneProps) {
         pageTranslation={props.pageTranslation}
         loadingMessage={props.loadingMessage}
         setupRequired={props.setupRequired}
-        statusMessage={props.statusMessage}
         progressLabel={props.progressLabel}
         progressDetailLabel={props.progressDetailLabel}
         progressDetailState={props.progressDetailState}
@@ -865,7 +1146,6 @@ export function TranslationPane(props: TranslationPaneProps) {
       pages={props.pages}
       currentPage={props.currentPage}
       setupRequired={props.setupRequired}
-      statusMessage={props.statusMessage}
       progressLabel={props.progressLabel}
       progressDetailLabel={props.progressDetailLabel}
       progressDetailState={props.progressDetailState}

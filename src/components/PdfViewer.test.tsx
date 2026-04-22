@@ -85,7 +85,7 @@ describe("PdfViewer", () => {
     expect(html.match(/120%/g)?.length).toBe(1);
   });
 
-  test("renders highlight overlays for the active PDF segment", () => {
+  test("sizes each dot marker from the extracted line thickness", () => {
     const html = renderToStaticMarkup(
       <PdfViewer
         pdfDoc={{} as any}
@@ -101,7 +101,10 @@ describe("PdfViewer", () => {
             source: "Original paragraph text.",
             translation: "Translated paragraph text.",
             status: "done",
-            rects: [{ page: 1, x: 12, y: 20, w: 40, h: 12 }],
+            rects: [
+              { page: 1, x: 12, y: 20, w: 40, h: 12 },
+              { page: 1, x: 12, y: 36, w: 38, h: 12 },
+            ],
           },
         ]}
         highlightPid="p-1"
@@ -116,6 +119,8 @@ describe("PdfViewer", () => {
     );
 
     expect(html).toContain('class="pdf-overlay"');
-    expect(html).toContain('class="pdf-highlight"');
+    expect(html.match(/class="pdf-highlight"/g)?.length).toBe(2);
+    expect(html).toContain("width:12px");
+    expect(html).toContain("height:12px");
   });
 });

@@ -183,16 +183,29 @@ export function PdfPage({
       <div ref={textLayerRef} className="pdf-text-layer" />
       <div className="pdf-overlay">
         {highlightRects.map((rect, index) => (
-          <div
-            key={`${rect.page}-${rect.x}-${rect.y}-${index}`}
-            className="pdf-highlight"
-            style={{
-              left: rect.x * scale,
-              top: rect.y * scale,
-              width: rect.w * scale,
-              height: rect.h * scale,
-            }}
-          />
+          (() => {
+            const markerSize = Math.max(
+              10,
+              Math.min(18, Math.round(Math.min(rect.w, rect.h) * scale)),
+            );
+            const markerRadius = markerSize / 2;
+
+            return (
+              <div
+                key={`${rect.page}-${rect.x}-${rect.y}-${index}`}
+                className="pdf-highlight"
+                style={{
+                  left: Math.max(0, rect.x * scale - markerRadius),
+                  top: Math.max(
+                    0,
+                    rect.y * scale + (rect.h * scale) / 2 - markerRadius,
+                  ),
+                  width: markerSize,
+                  height: markerSize,
+                }}
+              />
+            );
+          })()
         ))}
       </div>
     </div>
