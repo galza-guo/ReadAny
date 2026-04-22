@@ -18,6 +18,7 @@ import {
   resolvePdfScale,
   type PdfZoomMode,
 } from "../lib/readerLayout";
+import type { Paragraph } from "../types";
 import { DocumentStatusSurface } from "./document/DocumentStatusSurface";
 import { PdfPage } from "./PdfPage";
 import { PageNavigationToolbar } from "./reader/PageNavigationToolbar";
@@ -33,6 +34,8 @@ type PdfViewerProps = {
   zoomMode: PdfZoomMode;
   manualScale: number;
   scrollAnchor: "top" | "bottom";
+  paragraphs: Paragraph[];
+  highlightPid?: string | null;
   onNavigateToPage: (page: number) => void;
   onRequestPageChange: (direction: PdfPageTurnDirection) => void;
   onZoomModeChange: (mode: PdfZoomMode) => void;
@@ -62,6 +65,8 @@ export function PdfViewer({
   zoomMode,
   manualScale,
   scrollAnchor,
+  paragraphs,
+  highlightPid,
   onNavigateToPage,
   onRequestPageChange,
   onZoomModeChange,
@@ -338,6 +343,8 @@ export function PdfViewer({
               scale={effectiveScale}
               baseWidth={pageSize.width}
               baseHeight={pageSize.height}
+              paragraphs={paragraphs}
+              highlightPid={highlightPid}
               onSelectionText={onSelectionText}
               onClearSelection={onClearSelection}
             />

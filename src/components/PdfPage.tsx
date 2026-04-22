@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { normalizeSelectionText } from "../lib/pageText";
+import type { Paragraph } from "../types";
 import {
   loadPdfPageViewport,
   renderPdfPageToScratchCanvas,
@@ -19,6 +20,8 @@ type PdfPageProps = {
   scale: number;
   baseWidth: number;
   baseHeight: number;
+  paragraphs: Paragraph[];
+  highlightPid?: string | null;
   onSelectionText: (selection: { text: string; position: { x: number; y: number } }) => void;
   onClearSelection: () => void;
 };
@@ -29,6 +32,8 @@ export function PdfPage({
   scale,
   baseWidth,
   baseHeight,
+  paragraphs,
+  highlightPid,
   onSelectionText,
   onClearSelection,
 }: PdfPageProps) {
@@ -162,6 +167,12 @@ export function PdfPage({
     });
   }, [onClearSelection, onSelectionText]);
 
+  const highlightRects = highlightPid
+    ? paragraphs
+        .filter((paragraph) => paragraph.pid === highlightPid)
+        .flatMap((paragraph) => paragraph.rects)
+    : [];
+
   return (
     <div
       className="pdf-page"
@@ -170,6 +181,20 @@ export function PdfPage({
     >
       <canvas ref={canvasRef} className="pdf-canvas" />
       <div ref={textLayerRef} className="pdf-text-layer" />
+      <div className="pdf-overlay">
+        {highlightRects.map((rect, index) => (
+          <div
+            key={`${rect.page}-${rect.x}-${rect.y}-${index}`}
+            className="pdf-highlight"
+            style={{
+              left: rect.x * scale,
+              top: rect.y * scale,
+              width: rect.w * scale,
+              height: rect.h * scale,
+            }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
