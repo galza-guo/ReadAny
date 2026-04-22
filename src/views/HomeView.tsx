@@ -156,13 +156,6 @@ export function HomeView({
             {showUpdateAction && onInstallUpdate ? (
               <UpdateActionButton onClick={onInstallUpdate} />
             ) : null}
-            <ThemeToggleButton
-              theme={theme}
-              onToggle={onThemeToggle}
-              showHoverLabel={true}
-              labelDirection="left"
-              hoverLabel="Theme"
-            />
             <ExpandableIconButton
               aria-label="About"
               label="About"
@@ -171,6 +164,13 @@ export function HomeView({
             >
               <AboutIcon />
             </ExpandableIconButton>
+            <ThemeToggleButton
+              theme={theme}
+              onToggle={onThemeToggle}
+              showHoverLabel={true}
+              labelDirection="left"
+              hoverLabel="Theme"
+            />
             <ExpandableIconButton
               aria-label="Settings"
               label="Settings"

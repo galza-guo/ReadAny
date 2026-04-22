@@ -110,6 +110,15 @@ describe("HomeView layout", () => {
     expect(homeViewSource).not.toContain('className="home-settings-btn"');
   });
 
+  test("places the About button to the left of the theme toggle in the home header", () => {
+    const aboutIndex = homeViewSource.indexOf('label="About"');
+    const themeIndex = homeViewSource.indexOf("<ThemeToggleButton");
+
+    expect(aboutIndex).toBeGreaterThan(-1);
+    expect(themeIndex).toBeGreaterThan(-1);
+    expect(aboutIndex).toBeLessThan(themeIndex);
+  });
+
   test("delegates settings dialog ownership to app and only renders the trigger on home", () => {
     expect(homeViewSource).toContain("onOpenSettings");
     expect(homeViewSource).toContain("onClick={onOpenSettings}");
