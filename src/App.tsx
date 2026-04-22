@@ -124,6 +124,14 @@ import {
   shouldContinueQueuedPageTranslations,
   isRequestVersionCurrent,
 } from "./lib/pageTranslationScheduler";
+import {
+  addCompletedTranslateAllUnits,
+  getTranslateAllRateLimitBackoffMs,
+  resetCompletedUnitsAfterPause,
+  shouldPauseTranslateAll,
+  TRANSLATE_ALL_SLOW_MODE_BATCH_SIZE,
+  TRANSLATE_ALL_SLOW_MODE_PAUSE_MS,
+} from "./lib/translateAllSlowMode";
 import type {
   BatchTranslationResult,
   FileType,
@@ -138,7 +146,6 @@ import type {
   TranslationPreset,
   TranslationProviderKind,
   TranslationSettings,
-  WordDefinition,
   WordLookupResult,
   WordTranslation,
 } from "./types";
@@ -153,7 +160,6 @@ const DEFAULT_SETTINGS: TranslationSettings = {
 
 const ZOOM_LEVELS = [0.75, 1, 1.25, 1.5, 2];
 const PDF_KEYBOARD_ZOOM_STEP = 0.05;
-const PROVIDER_TIMEOUT_MS = 90_000;
 const FRONTEND_TIMEOUT_MS = 95_000;
 
 type AppView = "home" | "reader";
@@ -246,6 +252,42 @@ function invokeWithTimeout<T>(
   });
 }
 
+function selectSlowModeEpubBatch(
+  queuedParagraphIds: string[],
+  pages: PageDoc[],
+) {
+  const paragraphPageById = new Map<string, number>();
+  for (const page of pages) {
+    for (const paragraph of page.paragraphs) {
+      paragraphPageById.set(paragraph.pid, page.page);
+    }
+  }
+
+  const pageBatch = new Set<number>();
+  const selectedParagraphIds: string[] = [];
+
+  for (const paragraphId of queuedParagraphIds) {
+    const pageNumber = paragraphPageById.get(paragraphId);
+    if (pageNumber === undefined) {
+      continue;
+    }
+
+    if (
+      !pageBatch.has(pageNumber) &&
+      pageBatch.size >= TRANSLATE_ALL_SLOW_MODE_BATCH_SIZE
+    ) {
+      break;
+    }
+
+    pageBatch.add(pageNumber);
+    selectedParagraphIds.push(paragraphId);
+  }
+
+  return selectedParagraphIds.length > 0
+    ? selectedParagraphIds
+    : queuedParagraphIds.slice(0, 1);
+}
+
 function hasLoadedPdfTranslation(translation?: PageTranslationState) {
   return Boolean(
     translation?.status === "done" && translation.translatedText?.trim(),
@@ -319,6 +361,23 @@ function getFallbackAttemptSummary(trace?: TranslationFallbackTrace) {
   }
 
   return `Tried ${trace.attemptCount} presets.`;
+}
+
+function getFriendlyFallbackError(
+  trace?: TranslationFallbackTrace,
+  error?: unknown,
+) {
+  return getFriendlyProviderError(trace?.lastError ?? error);
+}
+
+function getFallbackFailureStatusMessage(
+  trace?: TranslationFallbackTrace,
+  error?: unknown,
+) {
+  const summary = getFallbackAttemptSummary(trace);
+  const friendlyError = getFriendlyFallbackError(trace, error);
+
+  return summary ? `${summary} ${friendlyError.message}` : friendlyError.message;
 }
 
 export default function App() {
@@ -429,14 +488,15 @@ function AppContent() {
     href: string;
     requestId: number;
   } | null>(null);
-  const [cachedPageTranslations, setCachedPageTranslations] = useState<
-    number[]
-  >([]);
-  const [cachedPageTranslationsReady, setCachedPageTranslationsReady] =
-    useState(false);
-  const [translateAllDialogOpen, setTranslateAllDialogOpen] = useState(false);
-  const [translateAllCachedCount, setTranslateAllCachedCount] = useState(0);
   const [isTranslateAllRunning, setIsTranslateAllRunning] = useState(false);
+  const [translateAllWaitState, setTranslateAllWaitState] = useState<{
+    kind: "slow-pause" | "rate-limit";
+    resumeAt: number;
+    page: number | null;
+  } | null>(null);
+  const [translateAllWaitTick, setTranslateAllWaitTick] = useState(() =>
+    Date.now(),
+  );
   const [isTranslateAllStopRequested, setIsTranslateAllStopRequested] =
     useState(false);
   const [pageTranslationInFlightPage, setPageTranslationInFlightPage] =
@@ -453,7 +513,6 @@ function AppContent() {
 
   const pagesRef = useRef<PageDoc[]>([]);
   const pageTranslationsRef = useRef<Record<number, PageTranslationState>>({});
-  const cachedPageTranslationsRef = useRef<number[]>([]);
   const textTranslationCacheRef = useRef(new LRUCache<string, string>(100));
   const settingsRef = useRef(settings);
   const settingsDraftRef = useRef<TranslationSettings | null>(settingsDraft);
@@ -481,10 +540,12 @@ function AppContent() {
   const pageTranslationInFlightRef = useRef<number | null>(null);
   const pageTranslatingRef = useRef(false);
   const isTranslateAllRunningRef = useRef(false);
+  const translateAllResumeTimerRef = useRef<number | null>(null);
+  const translateAllCompletedUnitsRef = useRef(0);
+  const translateAllRateLimitStreakRef = useRef(0);
   const translateAllErrorToastShownRef = useRef(false);
+  const fallbackToastEligiblePdfPagesRef = useRef<Set<number>>(new Set());
   const pdfTranslationSessionRef = useRef(0);
-  const cachedPageLookupRequestIdRef = useRef(0);
-  const cachedPageHydrationRequestIdRef = useRef(0);
   const pdfOutlineRequestIdRef = useRef(0);
   const fallbackRequestContextsRef = useRef<
     Record<string, FallbackRequestContext>
@@ -539,6 +600,34 @@ function AppContent() {
     [],
   );
 
+  const showFallbackSuccessToast = useCallback(
+    (trace: TranslationFallbackTrace) => {
+      if (!trace.usedFallback || trace.finalPresetId === trace.requestedPresetId) {
+        return;
+      }
+
+      const finalPreset = getPresetById(
+        settingsRef.current.presets,
+        trace.finalPresetId,
+      );
+      const currentEffectivePresetId =
+        sessionFallbackPresetIdRef.current ?? settingsRef.current.activePresetId;
+      const canUseForSession =
+        Boolean(finalPreset) && currentEffectivePresetId !== trace.finalPresetId;
+
+      showToast({
+        message: `Retried with ${finalPreset?.label ?? trace.finalPresetId}.`,
+        tone: "success",
+        durationMs: 4600,
+        actionLabel: canUseForSession ? "Use for this session" : undefined,
+        onAction: canUseForSession
+          ? () => setSessionFallbackPresetId(trace.finalPresetId)
+          : undefined,
+      });
+    },
+    [showToast],
+  );
+
   const persistPdfNavPrefs = useCallback(() => {
     savePdfNavigationPrefs({
       ...pdfNavPrefs,
@@ -573,10 +662,6 @@ function AppContent() {
   useEffect(() => {
     pageTranslationsRef.current = pageTranslations;
   }, [pageTranslations]);
-
-  useEffect(() => {
-    cachedPageTranslationsRef.current = cachedPageTranslations;
-  }, [cachedPageTranslations]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -861,6 +946,68 @@ function AppContent() {
     isTranslateAllRunningRef.current = isTranslateAllRunning;
   }, [isTranslateAllRunning]);
 
+  const clearTranslateAllResumeTimer = useCallback(() => {
+    if (translateAllResumeTimerRef.current !== null) {
+      window.clearTimeout(translateAllResumeTimerRef.current);
+      translateAllResumeTimerRef.current = null;
+    }
+
+    setTranslateAllWaitState(null);
+    setTranslateAllWaitTick(Date.now());
+  }, []);
+
+  const resetTranslateAllSlowModeRuntime = useCallback(() => {
+    clearTranslateAllResumeTimer();
+    translateAllCompletedUnitsRef.current = 0;
+    translateAllRateLimitStreakRef.current = 0;
+  }, [clearTranslateAllResumeTimer]);
+
+  const scheduleTranslateAllResume = useCallback(
+    (
+      delayMs: number,
+      waitState: {
+        kind: "slow-pause" | "rate-limit";
+        page: number | null;
+      },
+      resumeWork: () => void,
+    ) => {
+      clearTranslateAllResumeTimer();
+      const resumeAt = Date.now() + delayMs;
+      setTranslateAllWaitState({
+        ...waitState,
+        resumeAt,
+      });
+      setTranslateAllWaitTick(Date.now());
+      translateAllResumeTimerRef.current = window.setTimeout(() => {
+        translateAllResumeTimerRef.current = null;
+        setTranslateAllWaitState(null);
+        setTranslateAllWaitTick(Date.now());
+        resumeWork();
+      }, delayMs);
+    },
+    [clearTranslateAllResumeTimer],
+  );
+
+  useEffect(() => {
+    if (!translateAllWaitState) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setTranslateAllWaitTick(Date.now());
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [translateAllWaitState]);
+
+  useEffect(() => {
+    return () => {
+      clearTranslateAllResumeTimer();
+    };
+  }, [clearTranslateAllResumeTimer]);
+
   const allPdfPagesExtracted = useMemo(
     () =>
       currentFileType === "pdf" &&
@@ -874,9 +1021,9 @@ function AppContent() {
       getPageTranslationProgress({
         pages,
         pageTranslations,
-        cachedPages: cachedPageTranslations,
+        cachedPages: [],
       }),
-    [cachedPageTranslations, pageTranslations, pages],
+    [pageTranslations, pages],
   );
 
   const epubSectionTranslationProgress = useMemo(
@@ -907,7 +1054,6 @@ function AppContent() {
     return `${translationProgress.translatedCount}/${translationProgress.totalCount} ${translationProgress.unitLabel} translated`;
   }, [
     allPdfPagesExtracted,
-    cachedPageTranslationsReady,
     currentFileType,
     translationProgress,
   ]);
@@ -930,6 +1076,28 @@ function AppContent() {
         label: null,
         state: null,
       } as const;
+    }
+
+    if (translateAllWaitState) {
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((translateAllWaitState.resumeAt - translateAllWaitTick) / 1_000),
+      );
+
+      if (translateAllWaitState.kind === "slow-pause") {
+        return {
+          label: `Slow mode pause. Continuing in ${remainingSeconds}s`,
+          state: "running" as const,
+        };
+      }
+
+      return {
+        label:
+          currentFileType === "pdf" && translateAllWaitState.page !== null
+            ? `Rate limit hit on page ${translateAllWaitState.page}. Retrying in ${remainingSeconds}s`
+            : `Rate limit hit. Retrying in ${remainingSeconds}s`,
+        state: "running" as const,
+      };
     }
 
     if (currentFileType === "pdf") {
@@ -970,6 +1138,8 @@ function AppContent() {
     isTranslateAllRunning,
     isTranslateAllStopRequested,
     pageTranslationInFlightPage,
+    translateAllWaitState,
+    translateAllWaitTick,
     translationProgress.isFullyTranslated,
   ]);
 
@@ -1586,9 +1756,9 @@ function AppContent() {
       setScrollToTranslationPage(null);
       setSelectionTranslation(null);
       setWordTranslation(null);
-      setCachedPageTranslations([]);
-      setTranslateAllDialogOpen(false);
-      setTranslateAllCachedCount(0);
+      setHoverPid(null);
+      setActivePid(null);
+      resetTranslateAllSlowModeRuntime();
       isTranslateAllRunningRef.current = false;
       setIsTranslateAllRunning(false);
       translationRequestId.current = 0;
@@ -1602,8 +1772,6 @@ function AppContent() {
       pageTranslatingRef.current = false;
       setPageTranslationInFlightPage(null);
       pdfTranslationSessionRef.current += 1;
-      cachedPageLookupRequestIdRef.current += 1;
-      cachedPageHydrationRequestIdRef.current += 1;
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
 
       try {
@@ -1762,7 +1930,7 @@ function AppContent() {
         }
       }
     },
-    [releasePdfDocument],
+    [releasePdfDocument, resetTranslateAllSlowModeRuntime],
   );
 
   const loadEpubFromPath = useCallback(
@@ -1779,16 +1947,16 @@ function AppContent() {
       setPendingEpubNavigationHref(null);
       setPageSizes([]);
       setPageTranslations({});
-      setCachedPageTranslations([]);
       setSelectionTranslation(null);
+      setHoverPid(null);
+      setActivePid(null);
       setLoadingProgress(0);
       setDocumentStatusMessage(getReaderStatusLabel("loading-document"));
       setTranslationStatusMessage(null);
       setPdfScrollAnchor("top");
       setPendingEpubScroll(null);
       setScrollToTranslationPage(null);
-      setTranslateAllDialogOpen(false);
-      setTranslateAllCachedCount(0);
+      resetTranslateAllSlowModeRuntime();
       isTranslateAllRunningRef.current = false;
       setIsTranslateAllRunning(false);
       translationRequestId.current = 0;
@@ -1801,8 +1969,6 @@ function AppContent() {
       pageTranslationInFlightRef.current = null;
       pageTranslatingRef.current = false;
       setPageTranslationInFlightPage(null);
-      cachedPageLookupRequestIdRef.current += 1;
-      cachedPageHydrationRequestIdRef.current += 1;
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
 
       try {
@@ -1846,7 +2012,7 @@ function AppContent() {
         setLoadingProgress(null);
       }
     },
-    [],
+    [resetTranslateAllSlowModeRuntime],
   );
 
   const handleEpubMetadata = useCallback(
@@ -2008,7 +2174,6 @@ function AppContent() {
     setEpubData(null);
     setPages([]);
     setPageTranslations({});
-    setCachedPageTranslations([]);
     setPageSizes([]);
     setPdfScrollAnchor("top");
     setCurrentFilePath(null);
@@ -2022,8 +2187,7 @@ function AppContent() {
     setPendingEpubNavigationHref(null);
     setPendingEpubScroll(null);
     setScrollToTranslationPage(null);
-    setTranslateAllDialogOpen(false);
-    setTranslateAllCachedCount(0);
+    resetTranslateAllSlowModeRuntime();
     isTranslateAllRunningRef.current = false;
     setIsTranslateAllRunning(false);
     translatingRef.current = false;
@@ -2035,9 +2199,7 @@ function AppContent() {
     pageTranslationInFlightRef.current = null;
     pageTranslatingRef.current = false;
     setPageTranslationInFlightPage(null);
-    cachedPageLookupRequestIdRef.current += 1;
-    cachedPageHydrationRequestIdRef.current += 1;
-  }, [docId, pdfDoc, epubTotalPages, currentPage]);
+  }, [currentPage, docId, epubTotalPages, pdfDoc, resetTranslateAllSlowModeRuntime]);
 
   // Helper functions for chat context
   const getCurrentPageText = useCallback(() => {
@@ -2800,14 +2962,21 @@ function AppContent() {
     [flushDirtyPresetSaves],
   );
 
-  const handleDefaultLanguageChange = useCallback(
+  const handleReaderSettingsChange = useCallback(
     async (nextSettings: TranslationSettings) => {
       updateSettingsDraftState(nextSettings);
+      const previousSettings = settingsRef.current;
+      const changedFallback =
+        previousSettings.autoFallbackEnabled !== nextSettings.autoFallbackEnabled;
+      const changedSlowMode =
+        previousSettings.translateAllSlowMode !== nextSettings.translateAllSlowMode;
 
       try {
         const savedSettings = await persistSettings({
           ...settingsRef.current,
           defaultLanguage: nextSettings.defaultLanguage,
+          autoFallbackEnabled: nextSettings.autoFallbackEnabled,
+          translateAllSlowMode: nextSettings.translateAllSlowMode,
         });
 
         updateSettingsDraftState(
@@ -2815,13 +2984,19 @@ function AppContent() {
             ? {
                 ...settingsDraftRef.current,
                 defaultLanguage: savedSettings.defaultLanguage,
+                autoFallbackEnabled: savedSettings.autoFallbackEnabled,
+                translateAllSlowMode: savedSettings.translateAllSlowMode,
               }
             : settingsDraftRef.current,
         );
       } catch (error) {
-        console.error("Failed to save default language:", error);
+        console.error("Failed to save translation settings:", error);
         showToast({
-          message: "Could not save the default language.",
+          message: changedFallback
+            ? "Could not save automatic fallback."
+            : changedSlowMode
+              ? "Could not save Translate All slow mode."
+              : "Could not save the default language.",
           tone: "error",
           durationMs: 4200,
         });
@@ -2988,14 +3163,12 @@ function AppContent() {
     if (currentFileType !== "pdf") return;
     setPageTranslations({});
     setSelectionTranslation(null);
-    setCachedPageTranslations([]);
-    setCachedPageTranslationsReady(false);
-    setTranslateAllDialogOpen(false);
-    setTranslateAllCachedCount(0);
+    resetTranslateAllSlowModeRuntime();
     isTranslateAllRunningRef.current = false;
     setIsTranslateAllRunning(false);
     setIsTranslateAllStopRequested(false);
     translateAllErrorToastShownRef.current = false;
+    fallbackToastEligiblePdfPagesRef.current.clear();
     forceFreshSentenceTranslationIdsRef.current.clear();
     foregroundPageTranslateQueueRef.current = [];
     backgroundPageTranslateQueueRef.current = [];
@@ -3004,25 +3177,19 @@ function AppContent() {
     pageTranslatingRef.current = false;
     setPageTranslationInFlightPage(null);
     pdfTranslationSessionRef.current += 1;
-    cachedPageLookupRequestIdRef.current += 1;
-    cachedPageHydrationRequestIdRef.current += 1;
-  }, [
-    currentFileType,
-    docId,
-    settings.defaultLanguage.code,
-  ]);
+  }, [currentFileType, docId, resetTranslateAllSlowModeRuntime, settings.defaultLanguage.code]);
 
   useEffect(() => {
     if (currentFileType !== "pdf") return;
 
     setSelectionTranslation(null);
-    setTranslateAllDialogOpen(false);
-    setTranslateAllCachedCount(0);
     setTranslationStatusMessage(null);
+    resetTranslateAllSlowModeRuntime();
     isTranslateAllRunningRef.current = false;
     setIsTranslateAllRunning(false);
     setIsTranslateAllStopRequested(false);
     translateAllErrorToastShownRef.current = false;
+    fallbackToastEligiblePdfPagesRef.current.clear();
     foregroundPageTranslateQueueRef.current = [];
     backgroundPageTranslateQueueRef.current = [];
     pageTranslationRequestVersionsRef.current = {};
@@ -3030,10 +3197,9 @@ function AppContent() {
     pageTranslatingRef.current = false;
     setPageTranslationInFlightPage(null);
     pdfTranslationSessionRef.current += 1;
-    cachedPageHydrationRequestIdRef.current += 1;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     setPageTranslations((prev) => sanitizePdfTranslationsForPresetChange(prev));
-  }, [effectivePreset?.id, effectivePreset?.model, currentFileType]);
+  }, [currentFileType, effectivePreset?.id, effectivePreset?.model, resetTranslateAllSlowModeRuntime]);
 
   useEffect(() => {
     if (currentFileType !== "epub") return;
@@ -3043,94 +3209,19 @@ function AppContent() {
     translateQueueRef.current = [];
     forceFreshSentenceTranslationIdsRef.current.clear();
     setTranslationStatusMessage(null);
+    resetTranslateAllSlowModeRuntime();
     isTranslateAllRunningRef.current = false;
     setIsTranslateAllRunning(false);
     setIsTranslateAllStopRequested(false);
     translateAllErrorToastShownRef.current = false;
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     setPages((prev) => sanitizeEpubPagesForPresetChange(prev));
-  }, [effectivePreset?.id, effectivePreset?.model, currentFileType]);
+  }, [currentFileType, effectivePreset?.id, effectivePreset?.model, resetTranslateAllSlowModeRuntime]);
 
   useEffect(() => {
     if (currentFileType !== "pdf" || pages.length === 0) return;
     setCurrentPage((prev) => clampPage(prev, pages.length));
   }, [currentFileType, pages.length]);
-
-  const buildPdfPageCacheLookups = useCallback(() => {
-    return pagesRef.current
-      .filter((page) => page.isExtracted)
-      .map((page) => {
-        const payload = buildPageTranslationPayload(
-          pagesRef.current,
-          page.page,
-        );
-        return {
-          page: page.page,
-          displayText: payload.displayText,
-        };
-      })
-      .filter((page) => hasUsablePageText(page.displayText));
-  }, []);
-
-  const refreshCachedPageTranslations = useCallback(async () => {
-    if (currentFileType !== "pdf" || !docIdRef.current || !allPdfPagesExtracted) {
-      return cachedPageTranslationsRef.current;
-    }
-
-    const currentPreset = getEffectivePreset(settingsRef.current);
-    if (!currentPreset || !hasPresetTranslationContext(currentPreset)) {
-      setCachedPageTranslations([]);
-      setCachedPageTranslationsReady(true);
-      return [];
-    }
-
-    const requestId = ++cachedPageLookupRequestIdRef.current;
-    const pageLookups = buildPdfPageCacheLookups();
-    setCachedPageTranslationsReady(false);
-
-    if (pageLookups.length === 0) {
-      if (requestId !== cachedPageLookupRequestIdRef.current) {
-        return cachedPageTranslationsRef.current;
-      }
-
-      setCachedPageTranslations([]);
-      setCachedPageTranslationsReady(true);
-      return [];
-    }
-
-    try {
-      const cachedPages = await invoke<number[]>("list_cached_page_translations", {
-        presetId: currentPreset.id,
-        model: currentPreset.model,
-        targetLanguage: settingsRef.current.defaultLanguage,
-        docId: docIdRef.current,
-        pages: pageLookups,
-      });
-
-      if (requestId !== cachedPageLookupRequestIdRef.current) {
-        return cachedPageTranslationsRef.current;
-      }
-
-      const sortedCachedPages = cachedPages.sort((a, b) => a - b);
-      setCachedPageTranslations(sortedCachedPages);
-      setCachedPageTranslationsReady(true);
-      return sortedCachedPages;
-    } catch (error) {
-      if (requestId !== cachedPageLookupRequestIdRef.current) {
-        return cachedPageTranslationsRef.current;
-      }
-
-      console.error("Failed to list cached page translations:", error);
-      setCachedPageTranslations([]);
-      setCachedPageTranslationsReady(true);
-      return [];
-    }
-  }, [
-    allPdfPagesExtracted,
-    buildPdfPageCacheLookups,
-    currentFileType,
-    getEffectivePreset,
-  ]);
 
   const runPageTranslationQueue = useCallback(async () => {
     if (
@@ -3163,7 +3254,8 @@ function AppContent() {
     }
 
     const payload = buildPageTranslationPayload(pagesRef.current, nextPage);
-    if (!hasUsablePageText(payload.displayText)) {
+    const translatableParagraphs = getTranslatablePdfParagraphs(pageDoc);
+    if (translatableParagraphs.length === 0 || !hasUsablePageText(payload.displayText)) {
       setPageTranslations((prev) => ({
         ...prev,
         [nextPage]: {
@@ -3178,31 +3270,78 @@ function AppContent() {
       return;
     }
 
-    const sessionId = pdfTranslationSessionRef.current;
-    const requestVersion =
-      pageTranslationRequestVersionsRef.current[nextPage] ?? 0;
-    pageTranslatingRef.current = true;
-    pageTranslationInFlightRef.current = nextPage;
-    setPageTranslationInFlightPage(nextPage);
-    setPageTranslations((prev) => ({
-      ...prev,
+    const pendingParagraphs = translatableParagraphs.filter((paragraph) => {
+      return (
+        forceFreshSentenceTranslationIdsRef.current.has(paragraph.pid) ||
+        paragraph.status !== "done" ||
+        !paragraph.translation?.trim()
+      );
+    });
+
+    if (pendingParagraphs.length === 0) {
+      setPageTranslations((prev) => ({
+        ...prev,
         [nextPage]: {
           page: nextPage,
           displayText: payload.displayText,
           previousContext: payload.previousContext,
           nextContext: payload.nextContext,
-          translatedText: prev[nextPage]?.translatedText,
-          status: "loading",
-          isCached: prev[nextPage]?.isCached,
-          activityMessage: "Translating this page...",
+          translatedText: buildPdfPageTranslatedText(pageDoc),
+          status: "done",
+          activityMessage: undefined,
           error: undefined,
           errorChecks: undefined,
+          fallbackTrace: prev[nextPage]?.fallbackTrace,
+          isCached: prev[nextPage]?.isCached,
         },
       }));
+      void runPageTranslationQueue();
+      return;
+    }
+
+    const sessionId = pdfTranslationSessionRef.current;
+    const requestVersion =
+      pageTranslationRequestVersionsRef.current[nextPage] ?? 0;
+    const pendingParagraphIds = new Set(
+      pendingParagraphs.map((paragraph) => paragraph.pid),
+    );
+    pageTranslatingRef.current = true;
+    pageTranslationInFlightRef.current = nextPage;
+    setPageTranslationInFlightPage(nextPage);
+    setPages((prev) =>
+      prev.map((page) =>
+        page.page === nextPage
+          ? {
+              ...page,
+              paragraphs: page.paragraphs.map((paragraph) =>
+                pendingParagraphIds.has(paragraph.pid)
+                  ? { ...paragraph, status: "loading" as const }
+                  : paragraph,
+              ),
+            }
+          : page,
+      ),
+    );
+    setPageTranslations((prev) => ({
+      ...prev,
+      [nextPage]: {
+        page: nextPage,
+        displayText: payload.displayText,
+        previousContext: payload.previousContext,
+        nextContext: payload.nextContext,
+        translatedText: prev[nextPage]?.translatedText,
+        status: "loading",
+        isCached: prev[nextPage]?.isCached,
+        activityMessage: "Translating this page...",
+        error: undefined,
+        errorChecks: undefined,
+      },
+    }));
     setTranslationStatusMessage(
       getReaderStatusLabel("translating-page", { page: nextPage }),
     );
     let didError = false;
+    let scheduledResume = false;
     const fallbackRequestId = `pdf-page:${nextPage}:${requestVersion}:${sessionId}:${Date.now()}`;
 
     try {
@@ -3220,21 +3359,25 @@ function AppContent() {
       delete fallbackFailureTracesRef.current[fallbackRequestId];
 
       const result = (await invokeWithTimeout(
-        invoke("translate_page_text", {
+        invoke("openrouter_translate", {
           presetId: currentPreset.id,
           model: currentPreset.model,
           temperature: 0,
           targetLanguage: currentSettings.defaultLanguage,
-          docId: docIdRef.current,
-          page: nextPage,
-          displayText: payload.displayText,
-          previousContext: payload.previousContext,
-          nextContext: payload.nextContext,
+          sentences: pendingParagraphs.map((paragraph) => ({
+            sid: paragraph.pid,
+            text: paragraph.source,
+          })),
+          forceFreshIds: pendingParagraphs
+            .filter((paragraph) =>
+              forceFreshSentenceTranslationIdsRef.current.has(paragraph.pid),
+            )
+            .map((paragraph) => paragraph.pid),
           requestId: fallbackRequestId,
-        }) as Promise<PageTranslationResult>,
+        }) as Promise<BatchTranslationResult>,
         FRONTEND_TIMEOUT_MS,
         "Translation timed out after 90 seconds while waiting for this page.",
-      )) as PageTranslationResult;
+      )) as BatchTranslationResult;
       delete fallbackRequestContextsRef.current[fallbackRequestId];
       delete fallbackFailureTracesRef.current[fallbackRequestId];
 
@@ -3248,6 +3391,38 @@ function AppContent() {
       ) {
         return;
       }
+
+      const translationMap = new Map(
+        result.results.map((item) => [item.sid, item.translation]),
+      );
+      const hasMissingTranslation = pendingParagraphs.some(
+        (paragraph) => !translationMap.get(paragraph.pid),
+      );
+      if (hasMissingTranslation) {
+        throw new Error("Translation returned incomplete segment results.");
+      }
+
+      const updatedPage: PageDoc = {
+        ...pageDoc,
+        paragraphs: pageDoc.paragraphs.map((paragraph) => {
+          if (!pendingParagraphIds.has(paragraph.pid)) {
+            return paragraph;
+          }
+
+          return {
+            ...paragraph,
+            translation: translationMap.get(paragraph.pid),
+            status: "done" as const,
+          };
+        }),
+      };
+
+      setPages((prev) =>
+        prev.map((page) => (page.page === nextPage ? updatedPage : page)),
+      );
+      pendingParagraphs.forEach((paragraph) =>
+        forceFreshSentenceTranslationIdsRef.current.delete(paragraph.pid),
+      );
 
       setPageTranslations((prev) => ({
         ...prev,
@@ -3256,38 +3431,55 @@ function AppContent() {
           displayText: payload.displayText,
           previousContext: payload.previousContext,
           nextContext: payload.nextContext,
-          translatedText: result.translatedText,
+          translatedText: buildPdfPageTranslatedText(updatedPage),
           status: "done",
-          isCached: result.isCached,
+          isCached: false,
           fallbackTrace: result.fallbackTrace,
         },
       }));
-      if (result.isCached) {
-        setCachedPageTranslations((prev) =>
-          prev.includes(nextPage)
-            ? prev
-            : [...prev, nextPage].sort((a, b) => a - b),
-        );
+      const shouldShowFallbackToast =
+        fallbackToastEligiblePdfPagesRef.current.has(nextPage) &&
+        !isTranslateAllRunningRef.current;
+      fallbackToastEligiblePdfPagesRef.current.delete(nextPage);
+      if (shouldShowFallbackToast) {
+        showFallbackSuccessToast(result.fallbackTrace);
       }
-      if (
-        result.fallbackTrace.usedFallback &&
-        !isTranslateAllRunningRef.current
-      ) {
-        const finalPreset =
-          getPresetById(settingsRef.current.presets, result.fallbackTrace.finalPresetId);
-        showToast({
-          message: `Retried with ${finalPreset?.label ?? result.fallbackTrace.finalPresetId}.`,
-          tone: "success",
-          durationMs: 4600,
-          actionLabel: "Use for this session",
-          onAction: () =>
-            setSessionFallbackPresetId(result.fallbackTrace.finalPresetId),
-        });
+      if (isTranslateAllRunningRef.current) {
+        translateAllRateLimitStreakRef.current = 0;
+
+        if (
+          settingsRef.current.translateAllSlowMode &&
+          backgroundPageTranslateQueueRef.current.length > 0
+        ) {
+          const completedUnits = addCompletedTranslateAllUnits(
+            translateAllCompletedUnitsRef.current,
+            1,
+          );
+          translateAllCompletedUnitsRef.current = completedUnits;
+
+          if (shouldPauseTranslateAll(completedUnits)) {
+            translateAllCompletedUnitsRef.current =
+              resetCompletedUnitsAfterPause(completedUnits);
+            scheduledResume = true;
+            setTranslationStatusMessage(null);
+            scheduleTranslateAllResume(
+              TRANSLATE_ALL_SLOW_MODE_PAUSE_MS,
+              {
+                kind: "slow-pause",
+                page: nextPage,
+              },
+              () => {
+                void runPageTranslationQueue();
+              },
+            );
+          }
+        }
       }
     } catch (error) {
       const failureTrace = fallbackFailureTracesRef.current[fallbackRequestId];
       delete fallbackRequestContextsRef.current[fallbackRequestId];
       delete fallbackFailureTracesRef.current[fallbackRequestId];
+      fallbackToastEligiblePdfPagesRef.current.delete(nextPage);
       if (
         sessionId !== pdfTranslationSessionRef.current ||
         !isRequestVersionCurrent(
@@ -3299,13 +3491,74 @@ function AppContent() {
         return;
       }
 
-      const friendlyError = getFriendlyProviderError(error);
+      const friendlyError = getFriendlyFallbackError(failureTrace, error);
+      const shouldRetryAfterRateLimit =
+        isTranslateAllRunningRef.current &&
+        settingsRef.current.translateAllSlowMode &&
+        friendlyError.kind === "rate-limit";
+
+      if (shouldRetryAfterRateLimit) {
+        translateAllRateLimitStreakRef.current += 1;
+        const retryDelayMs = getTranslateAllRateLimitBackoffMs(
+          translateAllRateLimitStreakRef.current,
+        );
+        backgroundPageTranslateQueueRef.current = [
+          nextPage,
+          ...backgroundPageTranslateQueueRef.current.filter(
+            (queuedPage) => queuedPage !== nextPage,
+          ),
+        ];
+        setPages((prev) =>
+          prev.map((page) =>
+            page.page === nextPage
+              ? {
+                  ...page,
+                  paragraphs: page.paragraphs.map((paragraph) =>
+                    pendingParagraphIds.has(paragraph.pid)
+                      ? { ...paragraph, status: "idle" as const }
+                      : paragraph,
+                  ),
+                }
+              : page,
+          ),
+        );
+        setPageTranslations((prev) => ({
+          ...prev,
+          [nextPage]: {
+            page: nextPage,
+            displayText: payload.displayText,
+            previousContext: payload.previousContext,
+            nextContext: payload.nextContext,
+            translatedText: prev[nextPage]?.translatedText,
+            status: "queued",
+            activityMessage: undefined,
+            error: undefined,
+            errorChecks: undefined,
+            fallbackTrace: failureTrace,
+          },
+        }));
+        scheduledResume = true;
+        setTranslationStatusMessage(null);
+        scheduleTranslateAllResume(
+          retryDelayMs,
+          {
+            kind: "rate-limit",
+            page: nextPage,
+          },
+          () => {
+            void runPageTranslationQueue();
+          },
+        );
+        return;
+      }
+
       if (
         isTranslateAllRunningRef.current &&
         !translateAllErrorToastShownRef.current
       ) {
         showToast({
-          message: `Translate All hit an error on page ${nextPage}: ${friendlyError.message}`,
+          message: `Translate All hit an error on page ${nextPage}.`,
+          detail: getFallbackFailureStatusMessage(failureTrace, error),
           tone: "error",
           durationMs: 5200,
         });
@@ -3320,6 +3573,24 @@ function AppContent() {
         backgroundPageTranslateQueueRef.current = [];
       }
       didError = true;
+      const nextParagraphStatus =
+        friendlyError.kind === "setup-required"
+          ? ("idle" as const)
+          : ("error" as const);
+      setPages((prev) =>
+        prev.map((page) =>
+          page.page === nextPage
+            ? {
+                ...page,
+                paragraphs: page.paragraphs.map((paragraph) =>
+                  pendingParagraphIds.has(paragraph.pid)
+                    ? { ...paragraph, status: nextParagraphStatus }
+                    : paragraph,
+                ),
+              }
+            : page,
+        ),
+      );
       setPageTranslations((prev) => ({
         ...prev,
         [nextPage]: {
@@ -3337,11 +3608,10 @@ function AppContent() {
           fallbackTrace: failureTrace,
         },
       }));
-      const attemptSummary = getFallbackAttemptSummary(failureTrace);
       setTranslationStatusMessage(
-        attemptSummary
-          ? `${attemptSummary} ${friendlyError.message}`
-          : friendlyError.message,
+        friendlyError.kind === "setup-required"
+          ? TRANSLATION_SETUP_REQUIRED_MESSAGE
+          : getFallbackFailureStatusMessage(failureTrace, error),
       );
     } finally {
       pageTranslatingRef.current = false;
@@ -3352,12 +3622,16 @@ function AppContent() {
         backgroundPageTranslateQueueRef.current.length === 0
       ) {
         isTranslateAllRunningRef.current = false;
+        resetTranslateAllSlowModeRuntime();
         setIsTranslateAllRunning(false);
         setIsTranslateAllStopRequested(false);
         translateAllErrorToastShownRef.current = false;
         if (!didError) {
           setTranslationStatusMessage(null);
         }
+      }
+      if (scheduledResume) {
+        return;
       }
       if (
         shouldContinueQueuedPageTranslations({
@@ -3372,7 +3646,14 @@ function AppContent() {
         setTranslationStatusMessage(null);
       }
     }
-  }, [currentFileType, showToast]);
+  }, [
+    currentFileType,
+    getEffectivePreset,
+    resetTranslateAllSlowModeRuntime,
+    scheduleTranslateAllResume,
+    showFallbackSuccessToast,
+    showToast,
+  ]);
 
   const queuePagesForTranslation = useCallback(
     (
@@ -3388,12 +3669,16 @@ function AppContent() {
       let nextForegroundQueue = [...foregroundPageTranslateQueueRef.current];
       let nextBackgroundQueue = [...backgroundPageTranslateQueueRef.current];
       let nextRequestVersions = pageTranslationRequestVersionsRef.current;
-      const nextCachedPages = new Set(cachedPageTranslationsRef.current);
       const updates: Record<number, PageTranslationState> = {};
+      const nextPageDocs = new Map<number, PageDoc>();
       const orderedPages =
         options.priority === "foreground"
           ? [...pageNumbers].reverse()
           : pageNumbers;
+
+      const getWorkingPageDoc = (pageNumber: number) =>
+        nextPageDocs.get(pageNumber) ??
+        pagesRef.current.find((entry) => entry.page === pageNumber);
 
       if (!currentPreset || !hasPresetTranslationContext(currentPreset)) {
         foregroundPageTranslateQueueRef.current = [];
@@ -3403,17 +3688,14 @@ function AppContent() {
           setIsTranslateAllRunning(false);
         }
         for (const pageNumber of orderedPages) {
-          const pageDoc = pagesRef.current.find(
-            (entry) => entry.page === pageNumber,
-          );
+          const pageDoc = getWorkingPageDoc(pageNumber);
           if (!pageDoc?.isExtracted) continue;
 
           const payload = buildPageTranslationPayload(
             pagesRef.current,
             pageNumber,
           );
-          const existing = pageTranslationsRef.current[pageNumber];
-          if (existing?.status === "done" || nextCachedPages.has(pageNumber)) {
+          if (isPdfPageFullyTranslated(pageDoc)) {
             continue;
           }
 
@@ -3445,9 +3727,7 @@ function AppContent() {
       }
 
       for (const pageNumber of orderedPages) {
-        const pageDoc = pagesRef.current.find(
-          (entry) => entry.page === pageNumber,
-        );
+        const pageDoc = getWorkingPageDoc(pageNumber);
         if (!pageDoc?.isExtracted) continue;
 
         const payload = buildPageTranslationPayload(
@@ -3460,8 +3740,9 @@ function AppContent() {
           existing?.previousContext !== payload.previousContext ||
           existing?.nextContext !== payload.nextContext;
         const shouldForceFresh = Boolean(options.forceFresh || inputChanged);
+        const translatableParagraphs = getTranslatablePdfParagraphs(pageDoc);
 
-        if (!hasUsablePageText(payload.displayText)) {
+        if (translatableParagraphs.length === 0 || !hasUsablePageText(payload.displayText)) {
           updates[pageNumber] = {
             page: pageNumber,
             displayText: payload.displayText,
@@ -3479,9 +3760,24 @@ function AppContent() {
             pageNumber,
           );
           nextRequestVersions = bumpedVersion.versions;
-          nextCachedPages.delete(pageNumber);
+          translatableParagraphs.forEach((paragraph) =>
+            forceFreshSentenceTranslationIdsRef.current.add(paragraph.pid),
+          );
+          nextPageDocs.set(pageNumber, {
+            ...pageDoc,
+            paragraphs: pageDoc.paragraphs.map((paragraph) =>
+              translatableParagraphs.some((item) => item.pid === paragraph.pid)
+                ? {
+                    ...paragraph,
+                    translation: undefined,
+                    status: "idle" as const,
+                  }
+                : paragraph,
+            ),
+          });
         }
 
+        const workingPage = getWorkingPageDoc(pageNumber) ?? pageDoc;
         const nextState: PageTranslationState = {
           page: pageNumber,
           displayText: payload.displayText,
@@ -3489,7 +3785,7 @@ function AppContent() {
           nextContext: payload.nextContext,
           translatedText: shouldForceFresh
             ? undefined
-            : existing?.translatedText,
+            : buildPdfPageTranslatedText(workingPage),
           status: shouldForceFresh ? "idle" : (existing?.status ?? "idle"),
           isCached: shouldForceFresh ? false : existing?.isCached,
           activityMessage: shouldForceFresh
@@ -3501,8 +3797,7 @@ function AppContent() {
         updates[pageNumber] = nextState;
 
         const alreadyTranslated =
-          !shouldForceFresh &&
-          (nextCachedPages.has(pageNumber) || nextState.status === "done");
+          !shouldForceFresh && isPdfPageFullyTranslated(workingPage);
         const alreadyLoading =
           !shouldForceFresh && nextState.status === "loading";
 
@@ -3537,19 +3832,15 @@ function AppContent() {
       if (Object.keys(updates).length > 0) {
         setPageTranslations((prev) => ({ ...prev, ...updates }));
       }
+      if (nextPageDocs.size > 0) {
+        setPages((prev) =>
+          prev.map((page) => nextPageDocs.get(page.page) ?? page),
+        );
+      }
 
       pageTranslationRequestVersionsRef.current = nextRequestVersions;
       foregroundPageTranslateQueueRef.current = nextForegroundQueue;
       backgroundPageTranslateQueueRef.current = nextBackgroundQueue;
-      const sortedCachedPages = Array.from(nextCachedPages).sort(
-        (a, b) => a - b,
-      );
-      setCachedPageTranslations((prev) =>
-        prev.length === sortedCachedPages.length &&
-        prev.every((page, index) => page === sortedCachedPages[index])
-          ? prev
-          : sortedCachedPages,
-      );
 
       if (
         !pageTranslatingRef.current &&
@@ -3558,7 +3849,7 @@ function AppContent() {
         void runPageTranslationQueue();
       }
     },
-    [currentFileType, runPageTranslationQueue, settingsLoaded],
+    [currentFileType, getEffectivePreset, runPageTranslationQueue, settingsLoaded],
   );
 
   useEffect(() => {
@@ -3594,147 +3885,26 @@ function AppContent() {
     void runPageTranslationQueue();
   }, [currentFileType, docId, runPageTranslationQueue]);
 
-  useEffect(() => {
-    if (currentFileType !== "pdf" || !docId || !allPdfPagesExtracted) return;
-    void refreshCachedPageTranslations();
-  }, [
-    allPdfPagesExtracted,
-    currentFileType,
-    docId,
-    refreshCachedPageTranslations,
-    settings.defaultLanguage.code,
-  ]);
-
-  useEffect(() => {
-    if (
-      currentFileType !== "pdf" ||
-      !docId ||
-      !currentPdfPagePayload ||
-      !cachedPageTranslations.includes(currentPage) ||
-      !hasUsablePageText(currentPdfPagePayload.displayText)
-    ) {
-      return;
-    }
-
-    if (
-      hasLoadedPdfTranslation(currentPdfTranslation) ||
-      currentPdfTranslation?.status === "loading"
-    ) {
-      return;
-    }
-
-    const currentPreset = getEffectivePreset(settingsRef.current);
-    if (!currentPreset || !hasPresetTranslationContext(currentPreset)) {
-      return;
-    }
-
-    const requestId = ++cachedPageHydrationRequestIdRef.current;
-
-    invoke<PageTranslationResult | null>("get_cached_page_translation", {
-      presetId: currentPreset.id,
-      model: currentPreset.model,
-      targetLanguage: settings.defaultLanguage,
-      docId,
-      page: currentPage,
-      displayText: currentPdfPagePayload.displayText,
-    })
-      .then((result) => {
-        if (requestId !== cachedPageHydrationRequestIdRef.current || !result) {
-          return;
-        }
-
-        setPageTranslations((prev) => {
-          const existing = prev[currentPage];
-          if (
-            existing?.status === "loading" ||
-            hasLoadedPdfTranslation(existing)
-          ) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            [currentPage]: {
-              page: currentPage,
-              displayText: currentPdfPagePayload.displayText,
-              previousContext: currentPdfPagePayload.previousContext,
-              nextContext: currentPdfPagePayload.nextContext,
-              translatedText: result.translatedText,
-              status: "done",
-              isCached: true,
-              fallbackTrace: result.fallbackTrace,
-              error: undefined,
-              activityMessage: undefined,
-            },
-          };
-        });
-      })
-      .catch((error) => {
-        if (requestId !== cachedPageHydrationRequestIdRef.current) {
-          return;
-        }
-
-        console.error("Failed to hydrate cached page translation:", error);
-      });
-  }, [
-    cachedPageTranslations,
-    currentFileType,
-    currentPage,
-    currentPdfPagePayload,
-    currentPdfTranslation,
-    docId,
-    getEffectivePreset,
-    settings.defaultLanguage,
-  ]);
-
   const startTranslateAll = useCallback(
     async (mode: "skip-cached" | "replace-all") => {
       if (currentFileType !== "pdf" || !docIdRef.current) {
         return;
       }
 
-      const pageLookups = buildPdfPageCacheLookups();
-      const pageNumbers = pageLookups.map((page) => page.page);
+      const pageNumbers = pagesRef.current
+        .filter((page) => getTranslatablePdfParagraphs(page).length > 0)
+        .map((page) => page.page);
       if (pageNumbers.length === 0) {
         return;
       }
 
       isTranslateAllRunningRef.current = true;
+      resetTranslateAllSlowModeRuntime();
       setIsTranslateAllRunning(true);
       setIsTranslateAllStopRequested(false);
       translateAllErrorToastShownRef.current = false;
 
       if (mode === "replace-all") {
-        try {
-          const currentPreset = getEffectivePreset(settingsRef.current);
-          if (!currentPreset || !hasPresetTranslationContext(currentPreset)) {
-            throw new Error("No active preset configured.");
-          }
-
-          await invoke("clear_document_page_translations", {
-            targetLanguage: settingsRef.current.defaultLanguage,
-            docId: docIdRef.current,
-          });
-        } catch (error) {
-          const friendlyError = getFriendlyProviderError(error);
-          setTranslationStatusMessage(
-            friendlyError.kind === "unknown"
-              ? `Failed to reset page translation cache: ${friendlyError.message}`
-              : friendlyError.message,
-          );
-          showToast({
-            message: `Translate All could not reset cached pages: ${friendlyError.message}`,
-            tone: "error",
-            durationMs: 5200,
-          });
-          isTranslateAllRunningRef.current = false;
-          setIsTranslateAllRunning(false);
-          setIsTranslateAllStopRequested(false);
-          return;
-        }
-
-        setCachedPageTranslations([]);
-        setCachedPageTranslationsReady(true);
         queuePagesForTranslation(pageNumbers, {
           priority: "background",
           forceFresh: true,
@@ -3747,26 +3917,19 @@ function AppContent() {
         setTranslationStatusMessage("Translating all pages...");
       }
 
-      setTranslateAllDialogOpen(false);
-      setTranslateAllCachedCount(0);
     },
-    [
-      buildPdfPageCacheLookups,
-      currentFileType,
-      queuePagesForTranslation,
-      showToast,
-    ],
+    [currentFileType, queuePagesForTranslation, resetTranslateAllSlowModeRuntime],
   );
 
   const stopTranslateAll = useCallback(() => {
-    setTranslateAllDialogOpen(false);
-    setTranslateAllCachedCount(0);
+    clearTranslateAllResumeTimer();
 
     if (currentFileType === "pdf") {
       backgroundPageTranslateQueueRef.current = [];
 
       if (!pageTranslatingRef.current) {
         isTranslateAllRunningRef.current = false;
+        resetTranslateAllSlowModeRuntime();
         setIsTranslateAllRunning(false);
         setIsTranslateAllStopRequested(false);
         translateAllErrorToastShownRef.current = false;
@@ -3791,6 +3954,7 @@ function AppContent() {
 
       if (!translatingRef.current) {
         isTranslateAllRunningRef.current = false;
+        resetTranslateAllSlowModeRuntime();
         setIsTranslateAllRunning(false);
         setIsTranslateAllStopRequested(false);
         translateAllErrorToastShownRef.current = false;
@@ -3801,7 +3965,7 @@ function AppContent() {
       setIsTranslateAllStopRequested(true);
       setTranslationStatusMessage("Stopping after current batch...");
     }
-  }, [currentFileType]);
+  }, [clearTranslateAllResumeTimer, currentFileType, resetTranslateAllSlowModeRuntime]);
 
   const handleRedoPageTranslation = useCallback(
     async (pageNumber: number) => {
@@ -3824,35 +3988,11 @@ function AppContent() {
         return;
       }
 
-      try {
-        const currentPreset = getEffectivePreset(settingsRef.current);
-        if (!currentPreset || !hasPresetTranslationContext(currentPreset)) {
-          throw new Error("No active preset configured.");
-        }
-
-        await invoke("clear_cached_page_translation", {
-          targetLanguage: settingsRef.current.defaultLanguage,
-          docId: docIdRef.current,
-          page: pageNumber,
-        });
-      } catch (error) {
-        const friendlyError = getFriendlyProviderError(error);
-        setTranslationStatusMessage(
-          friendlyError.kind === "unknown"
-            ? `Failed to reset page translation cache: ${friendlyError.message}`
-            : friendlyError.message,
-        );
-        return;
-      }
-
-      setCachedPageTranslations((prev) =>
-        prev.filter((cachedPage) => cachedPage !== pageNumber),
-      );
-      setCachedPageTranslationsReady(true);
       queuePagesForTranslation([pageNumber], {
         priority: "foreground",
         forceFresh: true,
       });
+      fallbackToastEligiblePdfPagesRef.current.add(pageNumber);
       setTranslationStatusMessage(
         getReaderStatusLabel("redoing-page", { page: pageNumber }),
       );
@@ -3919,6 +4059,7 @@ function AppContent() {
       }
 
       isTranslateAllRunningRef.current = true;
+      resetTranslateAllSlowModeRuntime();
       setIsTranslateAllRunning(true);
       setIsTranslateAllStopRequested(false);
       translateAllErrorToastShownRef.current = false;
@@ -3941,27 +4082,8 @@ function AppContent() {
       return;
     }
 
-    const resolvedCachedPages = cachedPageTranslationsReady
-      ? cachedPageTranslationsRef.current
-      : await refreshCachedPageTranslations();
-    const resolvedProgress = getPageTranslationProgress({
-      pages: pagesRef.current,
-      pageTranslations: pageTranslationsRef.current,
-      cachedPages: resolvedCachedPages,
-    });
-
-    if (resolvedProgress.isFullyTranslated) {
+    if (translationProgress.isFullyTranslated) {
       void startTranslateAll("replace-all");
-      return;
-    }
-
-    const cachedPagesOutsideCurrent = resolvedCachedPages.filter(
-      (page) => page !== currentPage,
-    );
-
-    if (cachedPagesOutsideCurrent.length > 0) {
-      setTranslateAllCachedCount(cachedPagesOutsideCurrent.length);
-      setTranslateAllDialogOpen(true);
       return;
     }
 
@@ -3969,12 +4091,11 @@ function AppContent() {
   }, [
     activePresetHasTranslationContext,
     allPdfPagesExtracted,
-    cachedPageTranslationsReady,
     currentFileType,
-    currentPage,
-    refreshCachedPageTranslations,
+    resetTranslateAllSlowModeRuntime,
     startTranslateAll,
     stopTranslateAll,
+    translationProgress.isFullyTranslated,
   ]);
 
   const handlePdfSelectionTranslate = useCallback(
@@ -3993,12 +4114,12 @@ function AppContent() {
           throw new Error("No active preset configured.");
         }
 
-        const translation = (await invoke("translate_selection_text", {
+        const result = (await invoke("translate_selection_text", {
           presetId: currentPreset.id,
           model: currentPreset.model,
           targetLanguage: settingsRef.current.defaultLanguage,
           text: selection.text,
-        })) as string;
+        })) as SelectionTranslationResult;
 
         if (sessionId !== pdfTranslationSessionRef.current) {
           return;
@@ -4007,8 +4128,9 @@ function AppContent() {
         setSelectionTranslation({
           text: selection.text,
           position: selection.position,
-          translation,
+          translation: result.translation,
         });
+        showFallbackSuccessToast(result.fallbackTrace);
       } catch (error) {
         if (sessionId !== pdfTranslationSessionRef.current) {
           return;
@@ -4038,6 +4160,8 @@ function AppContent() {
 
       setPdfScrollAnchor(options?.anchor ?? "top");
       setCurrentPage(clampedPage);
+      setHoverPid(null);
+      setActivePid(null);
       setSelectionTranslation(null);
     },
     [currentFileType, currentPage, pages.length],
@@ -4058,23 +4182,37 @@ function AppContent() {
     if (!docIdRef.current) return;
 
     const uniqueQueue = Array.from(new Set(translateQueueRef.current));
-    translateQueueRef.current = [];
     if (uniqueQueue.length === 0) return;
+
+    const currentSettings = settingsRef.current;
+    const isBulkRun =
+      currentFileType === "epub" && isTranslateAllRunningRef.current;
+    const isSlowModeBulkRun =
+      isBulkRun && currentSettings.translateAllSlowMode;
+    const activeQueue = isSlowModeBulkRun
+      ? selectSlowModeEpubBatch(uniqueQueue, pagesRef.current)
+      : uniqueQueue;
+    translateQueueRef.current = uniqueQueue.slice(activeQueue.length);
+    const activeQueueIds = new Set(activeQueue);
 
     const pending = pagesRef.current
       .flatMap((page) => page.paragraphs)
       .filter(
         (para) =>
-          uniqueQueue.includes(para.pid) &&
+          activeQueueIds.has(para.pid) &&
           (para.status === "idle" || para.status === "error"),
       );
 
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      if (translateQueueRef.current.length > 0) {
+        void runTranslateQueue();
+      }
+      return;
+    }
 
     translatingRef.current = true;
     const requestId = ++translationRequestId.current;
-    const isBulkRun =
-      currentFileType === "epub" && isTranslateAllRunningRef.current;
+    const fallbackRequestId = `epub-batch:${requestId}:${Date.now()}`;
 
     setPages((prev) =>
       prev.map((page) => ({
@@ -4095,6 +4233,7 @@ function AppContent() {
     }
 
     let didError = false;
+    let scheduledResume = false;
     try {
       const payload = pending.map((para) => ({
         sid: para.pid,
@@ -4105,12 +4244,16 @@ function AppContent() {
           forceFreshSentenceTranslationIdsRef.current.has(para.pid),
         )
         .map((para) => para.pid);
-      const currentSettings = settingsRef.current;
       const currentPreset = getEffectivePreset(currentSettings);
       if (!currentPreset || !hasPresetTranslationContext(currentPreset)) {
         throw new Error("No active preset configured.");
       }
-      const results = (await invokeWithTimeout(
+      fallbackRequestContextsRef.current[fallbackRequestId] = {
+        kind: "epub-batch",
+        requestId,
+      };
+      delete fallbackFailureTracesRef.current[fallbackRequestId];
+      const result = (await invokeWithTimeout(
         invoke("openrouter_translate", {
           presetId: currentPreset.id,
           model: currentPreset.model,
@@ -4118,10 +4261,13 @@ function AppContent() {
           targetLanguage: currentSettings.defaultLanguage,
           sentences: payload,
           forceFreshIds,
-        }) as Promise<{ sid: string; translation: string }[]>,
-        PROVIDER_TIMEOUT_MS,
+          requestId: fallbackRequestId,
+        }) as Promise<BatchTranslationResult>,
+        FRONTEND_TIMEOUT_MS,
         "Translation timed out after 90 seconds.",
-      )) as { sid: string; translation: string }[];
+      )) as BatchTranslationResult;
+      delete fallbackRequestContextsRef.current[fallbackRequestId];
+      delete fallbackFailureTracesRef.current[fallbackRequestId];
 
       if (translationRequestId.current !== requestId) {
         setPages((prev) =>
@@ -4139,7 +4285,7 @@ function AppContent() {
       }
 
       const translationMap = new Map(
-        results.map((item) => [item.sid, item.translation]),
+        result.results.map((item) => [item.sid, item.translation]),
       );
       setPages((prev) =>
         prev.map((page) => ({
@@ -4157,12 +4303,89 @@ function AppContent() {
       forceFreshIds.forEach((id) =>
         forceFreshSentenceTranslationIdsRef.current.delete(id),
       );
+      if (isBulkRun) {
+        translateAllRateLimitStreakRef.current = 0;
+
+        if (isSlowModeBulkRun && translateQueueRef.current.length > 0) {
+          const completedUnits = addCompletedTranslateAllUnits(
+            translateAllCompletedUnitsRef.current,
+            new Set(pending.map((paragraph) => paragraph.page)).size,
+          );
+          translateAllCompletedUnitsRef.current = completedUnits;
+
+          if (shouldPauseTranslateAll(completedUnits)) {
+            translateAllCompletedUnitsRef.current =
+              resetCompletedUnitsAfterPause(completedUnits);
+            scheduledResume = true;
+            setTranslationStatusMessage(null);
+            scheduleTranslateAllResume(
+              TRANSLATE_ALL_SLOW_MODE_PAUSE_MS,
+              {
+                kind: "slow-pause",
+                page: null,
+              },
+              () => {
+                window.clearTimeout(debounceRef.current);
+                debounceRef.current = window.setTimeout(() => {
+                  void runTranslateQueue();
+                }, 0);
+              },
+            );
+          }
+        }
+      }
+      if (!isBulkRun) {
+        showFallbackSuccessToast(result.fallbackTrace);
+      }
     } catch (error) {
-      const friendlyError = getFriendlyProviderError(error);
+      const failureTrace = fallbackFailureTracesRef.current[fallbackRequestId];
+      delete fallbackRequestContextsRef.current[fallbackRequestId];
+      delete fallbackFailureTracesRef.current[fallbackRequestId];
+      const friendlyError = getFriendlyFallbackError(failureTrace, error);
       const requiresSetup = friendlyError.kind === "setup-required";
+      const shouldRetryAfterRateLimit =
+        isSlowModeBulkRun && friendlyError.kind === "rate-limit";
+
+      if (shouldRetryAfterRateLimit) {
+        translateAllRateLimitStreakRef.current += 1;
+        const retryDelayMs = getTranslateAllRateLimitBackoffMs(
+          translateAllRateLimitStreakRef.current,
+        );
+        translateQueueRef.current = Array.from(
+          new Set([...activeQueue, ...translateQueueRef.current]),
+        );
+        setPages((prev) =>
+          prev.map((page) => ({
+            ...page,
+            paragraphs: page.paragraphs.map((para) =>
+              pending.some((item) => item.pid === para.pid)
+                ? { ...para, status: "idle" as const }
+                : para,
+            ),
+          })),
+        );
+        scheduledResume = true;
+        setTranslationStatusMessage(null);
+        scheduleTranslateAllResume(
+          retryDelayMs,
+          {
+            kind: "rate-limit",
+            page: null,
+          },
+          () => {
+            window.clearTimeout(debounceRef.current);
+            debounceRef.current = window.setTimeout(() => {
+              void runTranslateQueue();
+            }, 0);
+          },
+        );
+        return;
+      }
+
       if (isBulkRun && !translateAllErrorToastShownRef.current) {
         showToast({
-          message: `Translate All hit an error: ${friendlyError.message}`,
+          message: "Translate All hit an error.",
+          detail: getFallbackFailureStatusMessage(failureTrace, error),
           tone: "error",
           durationMs: 5200,
         });
@@ -4187,9 +4410,16 @@ function AppContent() {
       if (requiresSetup) {
         translateQueueRef.current = [];
       }
-      setTranslationStatusMessage(friendlyError.message);
+      setTranslationStatusMessage(
+        requiresSetup
+          ? TRANSLATION_SETUP_REQUIRED_MESSAGE
+          : getFallbackFailureStatusMessage(failureTrace, error),
+      );
     } finally {
       translatingRef.current = false;
+      if (scheduledResume) {
+        return;
+      }
       if (translateQueueRef.current.length > 0) {
         window.clearTimeout(debounceRef.current);
         debounceRef.current = window.setTimeout(() => {
@@ -4198,6 +4428,7 @@ function AppContent() {
       } else {
         if (isBulkRun) {
           isTranslateAllRunningRef.current = false;
+          resetTranslateAllSlowModeRuntime();
           setIsTranslateAllRunning(false);
           setIsTranslateAllStopRequested(false);
           translateAllErrorToastShownRef.current = false;
@@ -4207,7 +4438,14 @@ function AppContent() {
         }
       }
     }
-  }, [currentFileType, showToast]);
+  }, [
+    currentFileType,
+    getEffectivePreset,
+    resetTranslateAllSlowModeRuntime,
+    scheduleTranslateAllResume,
+    showFallbackSuccessToast,
+    showToast,
+  ]);
 
   const handleTranslatePid = useCallback(
     (pid: string, forceRetry = false) => {
@@ -4307,12 +4545,15 @@ function AppContent() {
             model: currentPreset.model,
             targetLanguage: currentSettings.defaultLanguage,
             word: text,
-          })) as { phonetic?: string; definitions: WordDefinition[] };
+          })) as WordLookupResult;
 
           // Cache the result
           textTranslationCacheRef.current.set(
             normalizedText,
-            JSON.stringify(result),
+            JSON.stringify({
+              phonetic: result.phonetic,
+              definitions: result.definitions,
+            }),
           );
 
           setWordTranslation({
@@ -4321,17 +4562,19 @@ function AppContent() {
             definitions: result.definitions || [],
             position,
           });
+          showFallbackSuccessToast(result.fallbackTrace);
         } else {
           // Use regular translation for phrases
-          const results = (await invoke("openrouter_translate", {
+          const result = (await invoke("openrouter_translate", {
             presetId: currentPreset.id,
             model: currentPreset.model,
             temperature: 0,
             targetLanguage: currentSettings.defaultLanguage,
             sentences: [{ sid: "text", text }],
-          })) as { sid: string; translation: string }[];
+          })) as BatchTranslationResult;
 
-          const translation = results[0]?.translation || "Translation failed";
+          const translation =
+            result.results[0]?.translation || "Translation failed";
 
           // Cache the result
           textTranslationCacheRef.current.set(normalizedText, translation);
@@ -4341,6 +4584,7 @@ function AppContent() {
             definitions: [{ pos: "", meanings: translation }],
             position,
           });
+          showFallbackSuccessToast(result.fallbackTrace);
         }
       } catch (error) {
         const friendlyError = getFriendlyProviderError(error);
@@ -4351,7 +4595,7 @@ function AppContent() {
         });
       }
     },
-    [],
+    [getEffectivePreset, showFallbackSuccessToast],
   );
 
   const handleClearWordTranslation = useCallback(() => {
@@ -4658,7 +4902,8 @@ function AppContent() {
     testAllDisabled: dialogSettings.presets.length === 0 || hasInvalidPreset,
     presetModels,
     presetModelMessages,
-    onSettingsChange: handleDefaultLanguageChange,
+    onSettingsChange: handleReaderSettingsChange,
+    sessionFallbackPresetId,
     onAddPreset: handleAddPreset,
     onDeletePreset: handleDeletePreset,
     onEditingPresetChange: handleEditingPresetChange,
@@ -4967,6 +5212,8 @@ function AppContent() {
                     zoomMode={pdfZoomMode}
                     manualScale={pdfManualScale}
                     scrollAnchor={pdfScrollAnchor}
+                    paragraphs={currentPdfPageDoc?.paragraphs ?? []}
+                    highlightPid={hoverPid ?? activePid}
                     onNavigateToPage={(page) => handlePdfPageChange(page)}
                     onRequestPageChange={handlePdfPageTurnRequest}
                     onZoomModeChange={handlePdfZoomModeChange}
@@ -5023,6 +5270,7 @@ function AppContent() {
                     <TranslationPane
                       mode="pdf"
                       currentPage={currentPage}
+                      page={currentPdfPageDoc}
                       pageTranslation={pageTranslations[currentPage]}
                       loadingMessage={currentPdfLoadingMessage}
                       setupRequired={showPdfSetupPrompt}
@@ -5039,6 +5287,10 @@ function AppContent() {
                       onOpenSettings={handleOpenSettings}
                       onRetryPage={handleRedoPageTranslation}
                       canRetryPage={canRedoCurrentPage}
+                      activePid={activePid}
+                      hoverPid={hoverPid}
+                      onHoverPid={setHoverPid}
+                      onLocatePid={handleLocatePid}
                       selectionTranslation={selectionTranslation}
                       onClearSelectionTranslation={
                         handleClearSelectionTranslation
@@ -5109,26 +5361,6 @@ function AppContent() {
               </div>
             </section>
           </main>
-          <ConfirmationDialog
-            open={translateAllDialogOpen}
-            onOpenChange={setTranslateAllDialogOpen}
-            title="Cached translations found"
-            description={`Found ${translateAllCachedCount} translated ${
-              translateAllCachedCount === 1 ? "page" : "pages"
-            } elsewhere in this PDF. Retranslate everything from scratch, or keep those pages and translate the rest?`}
-            actions={[
-              {
-                label: "Skip Cached",
-                onSelect: () => void startTranslateAll("skip-cached"),
-                variant: "primary",
-              },
-              {
-                label: "Retranslate All",
-                onSelect: () => void startTranslateAll("replace-all"),
-                variant: "danger",
-              },
-            ]}
-          />
         </div>
       </Tooltip.Provider>
     );
