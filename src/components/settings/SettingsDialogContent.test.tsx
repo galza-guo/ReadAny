@@ -16,6 +16,8 @@ function buildProps(
   const settings = overrides.settings ?? {
     theme: "system",
     activePresetId: "preset-1",
+    autoFallbackEnabled: false,
+    translateAllSlowMode: false,
     defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
     presets: [
       {
@@ -70,6 +72,15 @@ describe("SettingsDialogContent", () => {
     expect(html).not.toContain("New translations use this language by default.");
   });
 
+  test("renders the automatic fallback switch with experimental copy", () => {
+    const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
+
+    expect(html).toContain("Automatic fallback");
+    expect(html).toContain("Experimental");
+    expect(html).toContain("Retry another usable preset after a failure or timeout.");
+    expect(settingsDialogSource).toContain("settings-toggle-row");
+  });
+
   test("renders a provider picker and removes the old explicit save action", () => {
     const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
 
@@ -87,6 +98,8 @@ describe("SettingsDialogContent", () => {
           settings: {
             theme: "system",
             activePresetId: "preset-live",
+            autoFallbackEnabled: false,
+            translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [
               {
@@ -197,6 +210,8 @@ describe("SettingsDialogContent", () => {
           settings: {
             theme: "system",
             activePresetId: "preset-1",
+            autoFallbackEnabled: false,
+            translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [
               {
@@ -233,6 +248,8 @@ describe("SettingsDialogContent", () => {
           settings: {
             theme: "system",
             activePresetId: "preset-1",
+            autoFallbackEnabled: false,
+            translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [
               {
@@ -265,5 +282,41 @@ describe("SettingsDialogContent", () => {
     expect(settingsDialogSource).not.toContain('aria-label="Edit preset"');
     expect(settingsDialogSource).toContain("btn-danger-quiet");
     expect(settingsStylesSource).toContain(".settings-preset-chevron");
+  });
+
+  test("shows the session override label when a fallback preset is active for this session", () => {
+    const html = renderToStaticMarkup(
+      <SettingsDialogContent
+        {...buildProps({
+          liveActivePresetId: "preset-1",
+          sessionFallbackPresetId: "preset-2",
+          settings: {
+            theme: "system",
+            activePresetId: "preset-1",
+            autoFallbackEnabled: true,
+            translateAllSlowMode: false,
+            defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
+            presets: [
+              {
+                id: "preset-1",
+                label: "OpenRouter · openrouter/free",
+                providerKind: "openrouter",
+                model: "openrouter/free",
+                apiKeyConfigured: true,
+              },
+              {
+                id: "preset-2",
+                label: "DeepSeek · deepseek-chat",
+                providerKind: "deepseek",
+                model: "deepseek-chat",
+                apiKeyConfigured: true,
+              },
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(html).toContain("In use this session");
   });
 });

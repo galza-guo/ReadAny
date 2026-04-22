@@ -531,6 +531,32 @@ export function SettingsDialogContent({
     </Popover.Root>
   );
 
+  const translateAllSlowModeTooltip = (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <button
+          aria-label="About Translate All slow mode"
+          className="btn btn-icon-only btn-quiet-action settings-help-button"
+          type="button"
+        >
+          <HelpIcon />
+        </button>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          className="tooltip-content settings-toggle-tooltip"
+          side="top"
+          sideOffset={6}
+        >
+          Useful for rate-limited providers and free models. During Translate All,
+          readani pauses between small batches and retries automatically after
+          rate-limit errors. Other errors still stop the run.
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+
   return (
     <Tooltip.Provider delayDuration={250}>
       <div className="settings-layout">
@@ -551,6 +577,36 @@ export function SettingsDialogContent({
               }
               value={settings.defaultLanguage}
             />
+          </div>
+        </div>
+
+        <div className="settings-block settings-block-inline settings-block-inline-toggle">
+          <div className="settings-toggle-copy">
+            <div className="settings-toggle-title-row">
+              <span className="settings-toggle-title">Translate All slow mode</span>
+              {translateAllSlowModeTooltip}
+            </div>
+            <span className="settings-toggle-detail">
+              Pause during Translate All and retry automatically after rate-limit errors.
+            </span>
+          </div>
+          <div className="settings-inline-control settings-inline-control--switch">
+            <button
+              aria-checked={settings.translateAllSlowMode}
+              className={`settings-switch ${settings.translateAllSlowMode ? "is-on" : ""}`}
+              onClick={() => {
+                void Promise.resolve(
+                  onSettingsChange({
+                    ...settings,
+                    translateAllSlowMode: !settings.translateAllSlowMode,
+                  })
+                ).catch(() => {});
+              }}
+              role="switch"
+              type="button"
+            >
+              <span className="settings-switch-thumb" />
+            </button>
           </div>
         </div>
 
