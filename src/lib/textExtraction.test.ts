@@ -99,6 +99,26 @@ describe("textExtraction", () => {
     ]);
   });
 
+  test("keeps opening quotes with the sentence they introduce", () => {
+    const glyphs = verticalGlyphs(
+      "鎌倉・江戸からみると密接な関係がある。「日本」という枠組みでみると、九州は中心に位置した。",
+      520,
+      110,
+    );
+
+    const paragraphs = extractParagraphsFromGlyphs(glyphs, {
+      docId: "doc",
+      pageIndex: 0,
+      pageWidth: 600,
+      pageHeight: 900,
+    });
+
+    expect(paragraphs.map((paragraph) => paragraph.source)).toEqual([
+      "鎌倉・江戸からみると密接な関係がある。",
+      "「日本」という枠組みでみると、九州は中心に位置した。",
+    ]);
+  });
+
   test("does not split on OCR periods used like a CJK separator", () => {
     const glyphs = verticalGlyphs("日本史と中国.琉球との接点を知ることに繫がろう。", 520, 110);
 

@@ -312,6 +312,10 @@ function isOpeningQuoteOrBracket(char: string) {
   return /[("'“‘«‹「『（［【〈《〔｛]/u.test(char);
 }
 
+function isOpeningSentenceQuote(char: string) {
+  return /["'“‘«‹「『]/u.test(char);
+}
+
 function isClosingQuoteOrBracket(char: string) {
   return /[)"'”’»›」』）］】〉》〕｝〗〙〛]/u.test(char);
 }
@@ -603,6 +607,57 @@ function fallbackSegmentTextRanges(text: string) {
   return ranges.filter((range) => text.slice(range.start, range.end).trim().length > 0);
 }
 
+function hasSentenceTerminalBefore(text: string, start: number, end: number) {
+  for (let index = end - 1; index >= start; index -= 1) {
+    const char = text[index];
+    if (/\s/u.test(char) || isClosingQuoteOrBracket(char)) {
+      continue;
+    }
+
+    return isSentenceTerminalChar(char);
+  }
+
+  return false;
+}
+
+function moveTrailingOpeningQuotesToNextRange(
+  text: string,
+  ranges: Array<{ start: number; end: number }>,
+) {
+  if (ranges.length < 2) {
+    return ranges;
+  }
+
+  const adjusted = ranges.map((range) => ({ ...range }));
+
+  for (let index = 0; index < adjusted.length - 1; index += 1) {
+    const range = adjusted[index];
+    let quoteEnd = range.end;
+
+    while (quoteEnd > range.start && /\s/u.test(text[quoteEnd - 1])) {
+      quoteEnd -= 1;
+    }
+
+    let quoteStart = quoteEnd;
+    while (
+      quoteStart > range.start &&
+      isOpeningSentenceQuote(text[quoteStart - 1])
+    ) {
+      quoteStart -= 1;
+    }
+
+    if (
+      quoteStart < quoteEnd &&
+      hasSentenceTerminalBefore(text, range.start, quoteStart)
+    ) {
+      range.end = quoteStart;
+      adjusted[index + 1].start = quoteStart;
+    }
+  }
+
+  return adjusted.filter((range) => text.slice(range.start, range.end).trim().length > 0);
+}
+
 type IntlSegment = {
   index: number;
   segment: string;
@@ -642,7 +697,7 @@ function segmentTextRanges(text: string) {
       );
 
       if (ranges.length > 0) {
-        return ranges;
+        return moveTrailingOpeningQuotesToNextRange(segmentationText, ranges);
       }
     }
   } catch {
