@@ -106,7 +106,10 @@ import {
 import { getPdfJsWorkerPort } from "./lib/pdfWorker";
 import { buildPageTranslationPayload, hasUsablePageText } from "./lib/pageText";
 import { clampPage, getPagesToTranslate } from "./lib/pageQueue";
-import { getPdfPageLoadingMessage } from "./lib/pdfTranslationFeedback";
+import {
+  getPdfBackgroundTranslationMessage,
+  getPdfPageLoadingMessage,
+} from "./lib/pdfTranslationFeedback";
 import {
   TRANSLATION_SETUP_REQUIRED_MESSAGE,
   getProviderErrorDetail,
@@ -1663,6 +1666,28 @@ function AppContent() {
       pageTranslationInFlightPage,
     ],
   );
+  const pdfBackgroundTranslationMessage = useMemo(() => {
+    if (currentFileType !== "pdf" || currentPdfLoadingMessage) {
+      return null;
+    }
+
+    return getPdfBackgroundTranslationMessage({
+      currentPage,
+      inFlightPage: pageTranslationInFlightPage,
+      isTranslateAllRunning,
+    });
+  }, [
+    currentFileType,
+    currentPage,
+    currentPdfLoadingMessage,
+    isTranslateAllRunning,
+    pageTranslationInFlightPage,
+  ]);
+  const pdfProgressDetailLabel =
+    translateAllProgressDetail.label ?? pdfBackgroundTranslationMessage;
+  const pdfProgressDetailState =
+    translateAllProgressDetail.state ??
+    (pdfBackgroundTranslationMessage ? ("running" as const) : null);
   const currentEpubPageHasTranslation = useMemo(() => {
     if (currentFileType !== "epub") {
       return false;
@@ -3018,6 +3043,9 @@ function AppContent() {
       const previousSettings = settingsRef.current;
       const changedFallback =
         previousSettings.autoFallbackEnabled !== nextSettings.autoFallbackEnabled;
+      const changedAutoTranslateNextPages =
+        previousSettings.autoTranslateNextPages !==
+        nextSettings.autoTranslateNextPages;
       const changedSlowMode =
         previousSettings.translateAllSlowMode !== nextSettings.translateAllSlowMode;
 
@@ -3026,6 +3054,7 @@ function AppContent() {
           ...settingsRef.current,
           defaultLanguage: nextSettings.defaultLanguage,
           autoFallbackEnabled: nextSettings.autoFallbackEnabled,
+          autoTranslateNextPages: nextSettings.autoTranslateNextPages,
           translateAllSlowMode: nextSettings.translateAllSlowMode,
         });
 
@@ -3035,6 +3064,7 @@ function AppContent() {
                 ...settingsDraftRef.current,
                 defaultLanguage: savedSettings.defaultLanguage,
                 autoFallbackEnabled: savedSettings.autoFallbackEnabled,
+                autoTranslateNextPages: savedSettings.autoTranslateNextPages,
                 translateAllSlowMode: savedSettings.translateAllSlowMode,
               }
             : settingsDraftRef.current,
@@ -3044,7 +3074,9 @@ function AppContent() {
         showToast({
           message: changedFallback
             ? "Could not save automatic fallback."
-            : changedSlowMode
+            : changedAutoTranslateNextPages
+              ? "Could not save auto-translate ahead."
+              : changedSlowMode
               ? "Could not save Translate All slow mode."
               : "Could not save the default language.",
           tone: "error",
@@ -3962,15 +3994,23 @@ function AppContent() {
       !settingsLoaded
     )
       return;
-    queuePagesForTranslation(getPagesToTranslate(currentPage, pages.length), {
-      priority: "foreground",
-    });
+    queuePagesForTranslation(
+      getPagesToTranslate(
+        currentPage,
+        pages.length,
+        settings.autoTranslateNextPages,
+      ),
+      {
+        priority: "foreground",
+      },
+    );
   }, [
     currentFileType,
     currentPage,
     pages,
     pdfDoc,
     queuePagesForTranslation,
+    settings.autoTranslateNextPages,
     settingsLoaded,
   ]);
 
@@ -5401,8 +5441,8 @@ function AppContent() {
                       loadingMessage={currentPdfLoadingMessage}
                       setupRequired={showPdfSetupPrompt}
                       progressLabel={translationProgressLabel}
-                      progressDetailLabel={translateAllProgressDetail.label}
-                      progressDetailState={translateAllProgressDetail.state}
+                      progressDetailLabel={pdfProgressDetailLabel}
+                      progressDetailState={pdfProgressDetailState}
                       bulkActionLabel={translateAllActionLabel}
                       onBulkAction={handleTranslateAllAction}
                       bulkActionDisabled={

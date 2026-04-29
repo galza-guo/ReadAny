@@ -22,6 +22,8 @@ export {
 } from "./languageOptions";
 
 export const DEFAULT_THEME: ThemeMode = "system";
+export const DEFAULT_AUTO_TRANSLATE_NEXT_PAGES = 1;
+export const MAX_AUTO_TRANSLATE_NEXT_PAGES = 20;
 
 export const PRESET_PROVIDER_OPTIONS: Array<{
   value: TranslationProviderKind;
@@ -125,6 +127,9 @@ export function normalizeSettingsFromStorage(
   return {
     ...settings,
     autoFallbackEnabled: Boolean(settings.autoFallbackEnabled),
+    autoTranslateNextPages: normalizeAutoTranslateNextPages(
+      (settings as Partial<TranslationSettings>).autoTranslateNextPages
+    ),
     translateAllSlowMode: Boolean(settings.translateAllSlowMode),
     presets: settings.presets.map(normalizePresetFromStorage),
   };
@@ -210,6 +215,17 @@ export function getNextThemeMode(theme: ThemeMode): ThemeMode {
   }
 
   return "system";
+}
+
+export function normalizeAutoTranslateNextPages(value?: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_AUTO_TRANSLATE_NEXT_PAGES;
+  }
+
+  return Math.min(
+    MAX_AUTO_TRANSLATE_NEXT_PAGES,
+    Math.max(0, Math.floor(value))
+  );
 }
 
 export function getDefaultModelForProvider(providerKind: TranslationProviderKind) {
@@ -461,6 +477,7 @@ export function createDefaultSettings(): TranslationSettings {
   return {
     activePresetId: "",
     autoFallbackEnabled: false,
+    autoTranslateNextPages: DEFAULT_AUTO_TRANSLATE_NEXT_PAGES,
     translateAllSlowMode: false,
     defaultLanguage: DEFAULT_LANGUAGE,
     theme: DEFAULT_THEME,

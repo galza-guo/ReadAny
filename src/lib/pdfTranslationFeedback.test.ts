@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { PageDoc, PageTranslationState } from "../types";
-import { getPdfPageLoadingMessage } from "./pdfTranslationFeedback";
+import * as pdfTranslationFeedback from "./pdfTranslationFeedback";
+
+const { getPdfPageLoadingMessage } = pdfTranslationFeedback;
 
 function makePage(overrides: Partial<PageDoc> = {}): PageDoc {
   return {
@@ -78,5 +80,28 @@ describe("pdfTranslationFeedback", () => {
         inFlightPage: null,
       }),
     ).toBeNull();
+  });
+
+  test("shows when another PDF page is translating in the background", () => {
+    const getPdfBackgroundTranslationMessage = (
+      pdfTranslationFeedback as typeof pdfTranslationFeedback & {
+        getPdfBackgroundTranslationMessage?: (args: {
+          currentPage: number;
+          inFlightPage: number | null;
+          isTranslateAllRunning: boolean;
+        }) => string | null;
+      }
+    ).getPdfBackgroundTranslationMessage;
+
+    expect(typeof getPdfBackgroundTranslationMessage).toBe("function");
+    if (!getPdfBackgroundTranslationMessage) return;
+
+    expect(
+      getPdfBackgroundTranslationMessage({
+        currentPage: 4,
+        inFlightPage: 5,
+        isTranslateAllRunning: false,
+      }),
+    ).toBe("Translating page 5 in background");
   });
 });

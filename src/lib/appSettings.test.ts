@@ -92,6 +92,7 @@ describe("app settings helpers", () => {
     expect(createDefaultSettings()).toEqual({
       activePresetId: "",
       autoFallbackEnabled: false,
+      autoTranslateNextPages: 1,
       translateAllSlowMode: false,
       defaultLanguage: {
         code: "zh-CN",
@@ -149,6 +150,7 @@ describe("app settings helpers", () => {
     const normalized = normalizeSettingsFromStorage({
       activePresetId: "preset-1",
       autoFallbackEnabled: false,
+      autoTranslateNextPages: 1,
       translateAllSlowMode: false,
       defaultLanguage: {
         code: "zh-CN",
@@ -199,6 +201,30 @@ describe("app settings helpers", () => {
     } as TranslationSettings);
 
     expect(normalized.autoFallbackEnabled).toBe(false);
+  });
+
+  test("defaults following-page auto-translation to one page for older saved settings", () => {
+    const normalized = normalizeSettingsFromStorage({
+      activePresetId: "preset-1",
+      autoFallbackEnabled: false,
+      translateAllSlowMode: false,
+      defaultLanguage: {
+        code: "zh-CN",
+        label: "Chinese (Simplified)",
+      },
+      theme: "system",
+      presets: [
+        {
+          id: "preset-1",
+          label: "OpenRouter",
+          providerKind: "openrouter",
+          model: "openrouter/free",
+          apiKeyConfigured: true,
+        },
+      ],
+    } as TranslationSettings);
+
+    expect(normalized.autoTranslateNextPages).toBe(1);
   });
 
   test("keeps model empty while editing instead of backfilling a default model", () => {
@@ -455,6 +481,7 @@ describe("app settings helpers", () => {
       settings: {
         activePresetId: "preset-1",
         autoFallbackEnabled: false,
+        autoTranslateNextPages: 1,
         translateAllSlowMode: false,
         defaultLanguage: {
           code: "zh-CN",
@@ -475,6 +502,7 @@ describe("app settings helpers", () => {
       savedSettings: {
         activePresetId: "preset-1",
         autoFallbackEnabled: false,
+        autoTranslateNextPages: 1,
         translateAllSlowMode: false,
         defaultLanguage: {
           code: "zh-CN",
@@ -510,6 +538,7 @@ describe("app settings helpers", () => {
       settings: {
         activePresetId: "preset-2",
         autoFallbackEnabled: false,
+        autoTranslateNextPages: 1,
         translateAllSlowMode: false,
         defaultLanguage: {
           code: "zh-CN",
@@ -535,6 +564,7 @@ describe("app settings helpers", () => {
       savedSettings: {
         activePresetId: "preset-1",
         autoFallbackEnabled: false,
+        autoTranslateNextPages: 1,
         translateAllSlowMode: false,
         defaultLanguage: {
           code: "zh-CN",

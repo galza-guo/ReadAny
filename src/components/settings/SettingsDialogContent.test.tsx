@@ -17,6 +17,7 @@ function buildProps(
     theme: "system",
     activePresetId: "preset-1",
     autoFallbackEnabled: false,
+    autoTranslateNextPages: 1,
     translateAllSlowMode: false,
     defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
     presets: [
@@ -95,6 +96,19 @@ describe("SettingsDialogContent", () => {
     expect(html).not.toContain("New translations use this language by default.");
   });
 
+  test("renders a general setting for following-page auto-translation", () => {
+    const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
+
+    expect(html).toContain("Auto-translate ahead");
+    expect(html).toContain('id="auto-translate-next-pages"');
+    expect(html).toContain('role="combobox"');
+    expect(html).not.toContain('type="number"');
+    ["0 (off)", "1", "3", "5", "10", "20"].forEach((label) => {
+      expect(settingsDialogSource).toContain(`label: "${label}"`);
+    });
+    expect(settingsDialogSource).not.toContain("0 turns it off.");
+  });
+
   test("renders the automatic fallback switch with experimental copy", () => {
     const html = renderToStaticMarkup(<SettingsDialogContent {...buildProps()} />);
 
@@ -132,6 +146,7 @@ describe("SettingsDialogContent", () => {
             theme: "system",
             activePresetId: "",
             autoFallbackEnabled: false,
+            autoTranslateNextPages: 1,
             translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [],
@@ -159,6 +174,7 @@ describe("SettingsDialogContent", () => {
             theme: "system",
             activePresetId: "preset-live",
             autoFallbackEnabled: false,
+            autoTranslateNextPages: 1,
             translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [
@@ -271,6 +287,7 @@ describe("SettingsDialogContent", () => {
             theme: "system",
             activePresetId: "preset-1",
             autoFallbackEnabled: false,
+            autoTranslateNextPages: 1,
             translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [
@@ -309,6 +326,7 @@ describe("SettingsDialogContent", () => {
             theme: "system",
             activePresetId: "preset-1",
             autoFallbackEnabled: false,
+            autoTranslateNextPages: 1,
             translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [
@@ -354,6 +372,7 @@ describe("SettingsDialogContent", () => {
             theme: "system",
             activePresetId: "preset-1",
             autoFallbackEnabled: true,
+            autoTranslateNextPages: 1,
             translateAllSlowMode: false,
             defaultLanguage: { code: "zh-CN", label: "Chinese (Simplified)" },
             presets: [

@@ -7,6 +7,12 @@ type GetPdfPageLoadingMessageArgs = {
   inFlightPage: number | null;
 };
 
+type GetPdfBackgroundTranslationMessageArgs = {
+  currentPage: number;
+  inFlightPage: number | null;
+  isTranslateAllRunning: boolean;
+};
+
 export function getPdfPageLoadingMessage({
   currentPage,
   currentPageDoc,
@@ -32,4 +38,20 @@ export function getPdfPageLoadingMessage({
   }
 
   return null;
+}
+
+export function getPdfBackgroundTranslationMessage({
+  currentPage,
+  inFlightPage,
+  isTranslateAllRunning,
+}: GetPdfBackgroundTranslationMessageArgs): string | null {
+  if (
+    isTranslateAllRunning ||
+    inFlightPage === null ||
+    inFlightPage === currentPage
+  ) {
+    return null;
+  }
+
+  return `Translating page ${inFlightPage} in background`;
 }

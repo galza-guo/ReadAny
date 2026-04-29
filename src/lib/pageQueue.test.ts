@@ -13,6 +13,14 @@ describe("pageQueue", () => {
   test("prefetches current page and next page only", () => {
     expect(getPagesToTranslate(2, 4)).toEqual([2, 3]);
   });
+
+  test("prefetches a configurable number of following pages", () => {
+    expect(getPagesToTranslate(5, 10, 3)).toEqual([5, 6, 7, 8]);
+  });
+
+  test("can turn following-page prefetch off", () => {
+    expect(getPagesToTranslate(5, 10, 0)).toEqual([5]);
+  });
 });
 
 describe("page navigation", () => {

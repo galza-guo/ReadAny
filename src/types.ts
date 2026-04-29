@@ -58,6 +58,7 @@ export type TranslationProvidersState = {
 export type TranslationSettings = {
   activePresetId: string;
   autoFallbackEnabled: boolean;
+  autoTranslateNextPages: number;
   translateAllSlowMode: boolean;
   defaultLanguage: TargetLanguage;
   theme: ThemeMode;

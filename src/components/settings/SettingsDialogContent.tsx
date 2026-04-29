@@ -13,6 +13,7 @@ import {
   getPresetApiKeyFieldState,
   getPresetValidationState,
   getProviderOptionLabel,
+  normalizeAutoTranslateNextPages,
   PRESET_PROVIDER_OPTIONS,
   providerUsesApiKey,
   providerUsesEditableBaseUrl,
@@ -63,6 +64,22 @@ export type SettingsDialogContentProps = {
 };
 
 type SavedIndicatorPhase = "visible" | "fading";
+
+const AUTO_TRANSLATE_NEXT_PAGE_OPTIONS = [
+  { value: 0, label: "0 (off)" },
+  { value: 1, label: "1" },
+  { value: 3, label: "3" },
+  { value: 5, label: "5" },
+  { value: 10, label: "10" },
+  { value: 20, label: "20" },
+];
+
+function getAutoTranslateNextPageLabel(value: number) {
+  return (
+    AUTO_TRANSLATE_NEXT_PAGE_OPTIONS.find((option) => option.value === value)
+      ?.label ?? String(value)
+  );
+}
 
 function PlusIcon() {
   return (
@@ -647,6 +664,53 @@ export function SettingsDialogContent({
                   }
                   value={settings.defaultLanguage}
                 />
+              </div>
+            </div>
+            <div className="settings-block settings-block-inline">
+              <Label.Root className="settings-label type-field-label" htmlFor="auto-translate-next-pages">
+                Auto-translate ahead
+              </Label.Root>
+              <div className="settings-inline-control">
+                <Select.Root
+                  onValueChange={(value) => {
+                    const nextValue = normalizeAutoTranslateNextPages(
+                      Number.parseInt(value, 10),
+                    );
+                    void Promise.resolve(
+                      onSettingsChange({
+                        ...settings,
+                        autoTranslateNextPages: nextValue,
+                      })
+                    ).catch(() => {});
+                  }}
+                  value={String(settings.autoTranslateNextPages)}
+                >
+                  <Select.Trigger
+                    aria-label="Auto-translate ahead"
+                    className="select-trigger"
+                    id="auto-translate-next-pages"
+                  >
+                    <span>{getAutoTranslateNextPageLabel(settings.autoTranslateNextPages)}</span>
+                    <Select.Icon asChild>
+                      <ChevronDownIcon />
+                    </Select.Icon>
+                  </Select.Trigger>
+                  <Select.Portal>
+                    <Select.Content className="select-content settings-select-content" position="popper">
+                      <Select.Viewport>
+                        {AUTO_TRANSLATE_NEXT_PAGE_OPTIONS.map((option) => (
+                          <Select.Item
+                            className="select-item"
+                            key={option.value}
+                            value={String(option.value)}
+                          >
+                            <Select.ItemText>{option.label}</Select.ItemText>
+                          </Select.Item>
+                        ))}
+                      </Select.Viewport>
+                    </Select.Content>
+                  </Select.Portal>
+                </Select.Root>
               </div>
             </div>
           </div>

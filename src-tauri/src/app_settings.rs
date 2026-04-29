@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_MODEL: &str = "openrouter/free";
 const DEFAULT_LANGUAGE_CODE: &str = "zh-CN";
 const DEFAULT_LANGUAGE_LABEL: &str = "Chinese (Simplified)";
+const DEFAULT_AUTO_TRANSLATE_NEXT_PAGES: u32 = 1;
+const MAX_AUTO_TRANSLATE_NEXT_PAGES: u32 = 20;
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
 const OLLAMA_BASE_URL: &str = "http://localhost:11434/v1";
 
@@ -42,6 +44,8 @@ pub struct AppSettings {
     pub active_preset_id: String,
     #[serde(default)]
     pub auto_fallback_enabled: bool,
+    #[serde(default = "default_auto_translate_next_pages")]
+    pub auto_translate_next_pages: u32,
     #[serde(default)]
     pub translate_all_slow_mode: bool,
     pub presets: Vec<TranslationPreset>,
@@ -109,6 +113,7 @@ impl Default for AppSettings {
             default_language: SettingsLanguage::default(),
             active_preset_id: String::new(),
             auto_fallback_enabled: false,
+            auto_translate_next_pages: DEFAULT_AUTO_TRANSLATE_NEXT_PAGES,
             translate_all_slow_mode: false,
             presets: vec![],
         }
@@ -119,6 +124,8 @@ impl AppSettings {
     pub fn normalized(&self) -> Self {
         let mut normalized = self.clone();
         normalized.default_language = normalize_language(Some(&self.default_language));
+        normalized.auto_translate_next_pages =
+            normalize_auto_translate_next_pages(self.auto_translate_next_pages);
         normalized.presets = normalize_presets(&self.presets);
         normalized
             .presets
@@ -172,6 +179,14 @@ impl AppSettings {
         }
         self.preset(&self.active_preset_id)
     }
+}
+
+fn default_auto_translate_next_pages() -> u32 {
+    DEFAULT_AUTO_TRANSLATE_NEXT_PAGES
+}
+
+fn normalize_auto_translate_next_pages(value: u32) -> u32 {
+    value.min(MAX_AUTO_TRANSLATE_NEXT_PAGES)
 }
 
 pub fn merge_app_settings(existing: AppSettings, incoming: AppSettings) -> AppSettings {
@@ -262,6 +277,7 @@ pub fn migrate_legacy_translation_providers(
         default_language: normalize_language(default_language.as_ref()),
         active_preset_id,
         auto_fallback_enabled: false,
+        auto_translate_next_pages: DEFAULT_AUTO_TRANSLATE_NEXT_PAGES,
         translate_all_slow_mode: false,
         presets,
     }
@@ -477,6 +493,7 @@ mod tests {
             }
         );
         assert_eq!(settings.active_preset_id, "");
+        assert_eq!(settings.auto_translate_next_pages, 1);
         assert!(!settings.translate_all_slow_mode);
         assert!(settings.presets.is_empty());
     }
@@ -540,6 +557,7 @@ mod tests {
             },
             active_preset_id: "".to_string(),
             auto_fallback_enabled: true,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![TranslationPreset {
                 id: "openrouter-default".to_string(),
@@ -569,6 +587,7 @@ mod tests {
             default_language: SettingsLanguage::default(),
             active_preset_id: "ollama".to_string(),
             auto_fallback_enabled: false,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![TranslationPreset {
                 id: "ollama".to_string(),
@@ -602,6 +621,7 @@ mod tests {
             },
             active_preset_id: "".to_string(),
             auto_fallback_enabled: false,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![],
         };
@@ -644,6 +664,7 @@ mod tests {
             default_language: SettingsLanguage::default(),
             active_preset_id: "openrouter-openrouter-free".to_string(),
             auto_fallback_enabled: false,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![
                 TranslationPreset {
@@ -698,6 +719,7 @@ mod tests {
             default_language: SettingsLanguage::default(),
             active_preset_id: "preset-123".to_string(),
             auto_fallback_enabled: false,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![TranslationPreset {
                 id: "preset-123".to_string(),

@@ -1,8 +1,17 @@
-export function getPagesToTranslate(currentPage: number, totalPages: number) {
-  const pages = [currentPage];
+export function getPagesToTranslate(
+  currentPage: number,
+  totalPages: number,
+  followingPageCount = 1,
+) {
+  const clampedFollowingPageCount = Math.max(
+    0,
+    Math.floor(Number.isFinite(followingPageCount) ? followingPageCount : 1),
+  );
+  const lastPage = Math.min(totalPages, currentPage + clampedFollowingPageCount);
+  const pages: number[] = [];
 
-  if (currentPage + 1 <= totalPages) {
-    pages.push(currentPage + 1);
+  for (let page = currentPage; page <= lastPage; page += 1) {
+    pages.push(page);
   }
 
   return pages;

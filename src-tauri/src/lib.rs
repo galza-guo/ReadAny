@@ -2570,6 +2570,7 @@ mod tests {
             default_language: SettingsLanguage::default(),
             active_preset_id: "custom".to_string(),
             auto_fallback_enabled: true,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![
                 preset(
@@ -2623,6 +2624,7 @@ mod tests {
             default_language: SettingsLanguage::default(),
             active_preset_id: "openrouter".to_string(),
             auto_fallback_enabled: false,
+            auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
             presets: vec![
                 preset(
