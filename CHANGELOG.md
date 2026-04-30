@@ -2,6 +2,25 @@
 
 All notable changes to **readani** since forking from upstream (v0.1.8).
 
+## [1.2.1] — 2026-04-30
+
+### Added
+
+- **Interactive page progress bar** — the translation pane footer now shows a per-page color bar: green for translated pages, fading pulse for pages being translated, grey for pages yet to be translated. Click or drag anywhere on the bar to jump to that page. Full keyboard navigation (arrows, Home/End) and `prefers-reduced-motion` support.
+- **Auto-translate ahead** — new setting in General tab to configure how many following pages are pre-translated automatically (Off / 1 / 2 / 3+).
+
+### Changed
+
+- Cache management now distinguishes **legacy cached books** (from older versions) from current cache entries, with clearer labeling in the settings cache tab.
+- Translation queue logic: foreground page requests now reset the queue from scratch instead of accumulating stale entries; background pages no longer receive stale "queued" markers.
+
+### Fixed
+
+- **Resume where you left off** — previously translated pages failed to be automatically restored when a document was reopened; cached content now loads correctly so you never need to re-translate.
+- Opening quotes (e.g., `"`, `「`) now stay with the sentence they introduce instead of being split into a separate segment.
+- Page translation count derives from paragraph state only, eliminating false counts from empty or non-translatable pages.
+- Empty-state guard prevents spurious "input changed" detection when no prior translation state exists.
+
 ## [1.2.0] — 2026-04-22
 
 ### Added
@@ -70,6 +89,7 @@ The first release of **readani** as a standalone bilingual PDF reader, forked fr
 - PDF memory leaks in reader lifecycle — proper cleanup of pdf.js resources on unmount ([`cf17b87`](src/components/PdfPage.tsx))
 - Backend serde aliases for legacy provider kind values to maintain compatibility ([`aad5e20`](src-tauri/src/lib.rs))
 
+[1.2.1]: https://github.com/galza-guo/readani/releases/tag/v1.2.1
 [1.2.0]: https://github.com/galza-guo/readani/releases/tag/v1.2.0
 [1.1.0]: https://github.com/galza-guo/readani/releases/tag/v1.1.0
 [1.0.0]: https://github.com/galza-guo/readani/releases/tag/v1.0.0
