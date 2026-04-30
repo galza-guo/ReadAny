@@ -107,6 +107,10 @@ import { getPdfJsWorkerPort } from "./lib/pdfWorker";
 import { buildPageTranslationPayload, hasUsablePageText } from "./lib/pageText";
 import { clampPage, getPagesToTranslate } from "./lib/pageQueue";
 import {
+  applyCachedPdfPageTranslations,
+  type CachedPdfPageTranslation,
+} from "./lib/pdfCacheHydration";
+import {
   getPdfBackgroundTranslationMessage,
   getPdfPageLoadingMessage,
 } from "./lib/pdfTranslationFeedback";
@@ -123,6 +127,7 @@ import {
   enqueueForegroundPage,
   getEpubSectionTranslationProgress,
   getFullBookActionLabel,
+  getPageProgressMap,
   getPageTranslationProgress,
   shouldContinueQueuedPageTranslations,
   isRequestVersionCurrent,
@@ -651,6 +656,17 @@ function AppContent() {
     });
   }, []);
 
+  const handleSeekPage = useCallback(
+    (page: number) => {
+      const totalPages = pages.length;
+      if (totalPages === 0) return;
+      const target = Math.max(1, Math.min(page, totalPages));
+      setCurrentPage(target);
+      setPdfScrollAnchor("top");
+    },
+    [pages.length],
+  );
+
   const normalizeHref = useCallback((href: string) => href.split("#")[0], []);
 
   const matchHref = useCallback(
@@ -1041,6 +1057,17 @@ function AppContent() {
         pages,
       }),
     [pages],
+  );
+
+  const pageProgressMap = useMemo(
+    () =>
+      currentFileType === "pdf" && pages.length > 0
+        ? getPageProgressMap(pages, pageTranslations, {
+            foregroundQueue: foregroundPageTranslateQueueRef.current,
+            inFlightPage: pageTranslationInFlightPage,
+          })
+        : [],
+    [currentFileType, pageTranslationInFlightPage, pages, pageTranslations],
   );
 
   const epubSectionTranslationProgress = useMemo(
@@ -3987,6 +4014,81 @@ function AppContent() {
   useEffect(() => {
     if (
       currentFileType !== "pdf" ||
+      !docId ||
+      !settingsLoaded ||
+      !allPdfPagesExtracted ||
+      !effectivePreset ||
+      !hasPresetTranslationContext(effectivePreset)
+    ) {
+      return;
+    }
+
+    const lookupPages = pagesRef.current
+      .map((page) => ({
+        page: page.page,
+        paragraphs: getTranslatablePdfParagraphs(page).map((paragraph) => ({
+          sid: paragraph.pid,
+          text: paragraph.source,
+        })),
+      }))
+      .filter((page) => page.paragraphs.length > 0);
+
+    if (lookupPages.length === 0) {
+      return;
+    }
+
+    const sessionId = pdfTranslationSessionRef.current;
+    let cancelled = false;
+
+    void invoke("get_cached_pdf_page_translations", {
+      presetId: effectivePreset.id,
+      model: effectivePreset.model,
+      targetLanguage: settings.defaultLanguage,
+      pages: lookupPages,
+    })
+      .then((cachedPages) => {
+        if (
+          cancelled ||
+          pdfTranslationSessionRef.current !== sessionId ||
+          docIdRef.current !== docId
+        ) {
+          return;
+        }
+
+        const hydrated = applyCachedPdfPageTranslations(
+          pagesRef.current,
+          cachedPages as CachedPdfPageTranslation[],
+          pageTranslationsRef.current,
+        );
+        if (Object.keys(hydrated.pageTranslations).length === 0) {
+          return;
+        }
+
+        setPages(hydrated.pages);
+        setPageTranslations((prev) => ({
+          ...prev,
+          ...hydrated.pageTranslations,
+        }));
+      })
+      .catch((error) => {
+        console.error("Failed to load cached PDF translations:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    allPdfPagesExtracted,
+    currentFileType,
+    docId,
+    effectivePreset,
+    settings.defaultLanguage,
+    settingsLoaded,
+  ]);
+
+  useEffect(() => {
+    if (
+      currentFileType !== "pdf" ||
       !pdfDoc ||
       pages.length === 0 ||
       !settingsLoaded
@@ -5458,6 +5560,8 @@ function AppContent() {
                       onClearSelectionTranslation={
                         handleClearSelectionTranslation
                       }
+                      statusMap={pageProgressMap}
+                      onSeekPage={handleSeekPage}
                     />
                   ) : (
                     <TranslationPane
@@ -5484,6 +5588,7 @@ function AppContent() {
                       wordTranslation={wordTranslation}
                       onClearWordTranslation={handleClearWordTranslation}
                       scrollToPage={scrollToTranslationPage}
+                      statusMap={[]}
                     />
                   )
                 ) : (

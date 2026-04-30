@@ -1,6 +1,15 @@
-import type { PageDoc } from "../types";
+import type { PageDoc, PageTranslationState } from "../types";
 import { hasUsablePageText } from "./pageText";
-import { isPdfPageFullyTranslated } from "./pdfSegments";
+import {
+  getTranslatablePdfParagraphs,
+  isPdfPageFullyTranslated,
+} from "./pdfSegments";
+
+export type PageProgressStatus =
+  | "translated"
+  | "queued"
+  | "untranslated"
+  | "not-translatable";
 
 type PageTranslationProgressArgs = {
   pages: PageDoc[];
@@ -11,6 +20,11 @@ type PageTranslationProgress = {
   totalCount: number;
   isFullyTranslated: boolean;
   unitLabel: "pages" | "sections";
+};
+
+type PageProgressQueueState = {
+  foregroundQueue?: Iterable<number>;
+  inFlightPage?: number | null;
 };
 
 type DequeueNextPageArgs = {
@@ -200,4 +214,42 @@ export function isRequestVersionCurrent(
   version: number
 ) {
   return (versions[page] ?? 0) === version;
+}
+
+export function getPageProgressMap(
+  pages: PageDoc[],
+  pageTranslations?: Record<number, PageTranslationState>,
+  queueState?: PageProgressQueueState,
+): PageProgressStatus[] {
+  const queuedPages = new Set(queueState?.foregroundQueue ?? []);
+
+  return pages.map((page) => {
+    const translatableParagraphs = getTranslatablePdfParagraphs(page);
+
+    if (translatableParagraphs.length === 0) {
+      return "not-translatable";
+    }
+
+    if (isPdfPageFullyTranslated(page)) {
+      return "translated";
+    }
+
+    if (
+      page.page === queueState?.inFlightPage ||
+      queuedPages.has(page.page)
+    ) {
+      return "queued";
+    }
+
+    const translationState = pageTranslations?.[page.page];
+    if (translationState?.status === "loading") {
+      return "queued";
+    }
+
+    if (!queueState && translationState?.status === "queued") {
+      return "queued";
+    }
+
+    return "untranslated";
+  });
 }

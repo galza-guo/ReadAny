@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { PageDoc } from "../types";
+import type { PageDoc, PageTranslationState } from "../types";
 import {
   dequeueNextPage,
   enqueueBackgroundPages,
   enqueueForegroundPage,
   getEpubSectionTranslationProgress,
   getFullBookActionLabel,
+  getPageProgressMap,
   getPageTranslationProgress,
   shouldContinueQueuedPageTranslations,
   isRequestVersionCurrent,
@@ -144,6 +145,57 @@ describe("pageTranslationScheduler progress", () => {
     ).toBe(
       "Retranslate All"
     );
+  });
+
+  test("uses the live foreground queue to avoid stale queued progress markers", () => {
+    const pages: PageDoc[] = [
+      {
+        page: 1,
+        paragraphs: [{ pid: "a", page: 1, source: "First readable page.", status: "idle", rects: [] }],
+      },
+      {
+        page: 2,
+        paragraphs: [{ pid: "b", page: 2, source: "Second readable page.", status: "idle", rects: [] }],
+      },
+      {
+        page: 3,
+        paragraphs: [{ pid: "c", page: 3, source: "Third readable page.", status: "idle", rects: [] }],
+      },
+    ];
+    const pageTranslations: Record<number, PageTranslationState> = {
+      1: {
+        page: 1,
+        displayText: "First readable page.",
+        previousContext: "",
+        nextContext: "",
+        status: "queued",
+      },
+      2: {
+        page: 2,
+        displayText: "Second readable page.",
+        previousContext: "",
+        nextContext: "",
+        status: "queued",
+      },
+      3: {
+        page: 3,
+        displayText: "Third readable page.",
+        previousContext: "",
+        nextContext: "",
+        status: "loading",
+      },
+    };
+
+    expect(
+      getPageProgressMap(pages, pageTranslations, {
+        foregroundQueue: [2],
+        inFlightPage: 3,
+      })
+    ).toEqual([
+      "untranslated",
+      "queued",
+      "queued",
+    ]);
   });
 
   test("counts EPUB section progress by unique href instead of virtual page", () => {
