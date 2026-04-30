@@ -1207,7 +1207,7 @@ export function SettingsDialogContent({
                           {book.title}
                         </span>
                         <span className="settings-cache-item-detail type-meta">
-                          {book.cachedPageCount} cached page{book.cachedPageCount === 1 ? "" : "s"}
+                          {book.cachedPageCount} {book.isLegacyOnly ? "legacy cached" : "cached"} page{book.cachedPageCount === 1 ? "" : "s"}
                         </span>
                       </div>
                       <button
