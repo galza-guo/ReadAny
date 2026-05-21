@@ -5,12 +5,9 @@
 1. Lock the release lane.
    Treat the first official commercial launch as Mac App Store only: subscriptions, managed `readani` AI gateway, and App Store-compliant packaging. Keep GitHub Releases available as a free BYOK-only direct-download lane whenever needed.
 2. Make the proprietary AI gateway usable from `readani`.
-   The current gateway contracts are iOS-first for app clients and server-token-based for trusted backends, so `readani` still needs a desktop-safe access path before release.
+   Add a trusted `readani` backend layer inside PersonalSite. The consumer Mac app uses StoreKit 2 subscription proof; the trusted backend verifies entitlement server-side before calling the shared PersonalSite AI gateway.
 3. Choose the desktop gateway trust model.
-   Decide between:
-   - adding a dedicated macOS / desktop client contract and app policy for `readani`, or
-   - placing a small trusted `readani` backend in front of the PersonalSite gateway
-   The key rule is that the desktop app must not embed upstream provider secrets.
+   Decision: do not expose the shared AI gateway directly to the desktop app. Use StoreKit 2 JWS verification through PersonalSite `/api/readani/*` routes, then call the existing gateway with a server-side token. The key rule is that the desktop app must not embed upstream provider secrets or gateway server tokens.
 4. Configure the gateway for `readani`.
    Add `readani`-specific app policy, allowed model aliases, rate limits, environment variables, production storage, and usage monitoring.
 5. Define paid entitlement rules.
@@ -18,7 +15,7 @@
 6. Implement Apple subscriptions.
    Add Mac App Store auto-renewable subscription products in App Store Connect, wire StoreKit into the Tauri app, support purchase / restore / subscription status, and prepare sandbox/TestFlight billing tests.
 7. Connect subscription status to gateway access.
-   The gateway path used by `readani` must check that the user has an active paid entitlement before allowing proprietary AI usage.
+   The PersonalSite `readani` backend must verify an active StoreKit 2 subscription before allowing proprietary AI usage.
 8. Add in-app product changes.
    Add provider selection that clearly separates BYOK from `readani` gateway usage, add subscription entry points and paywall UI, gate premium accent colors, and explain the difference between free BYOK and paid managed AI.
 9. Finish Mac App Store build compliance.

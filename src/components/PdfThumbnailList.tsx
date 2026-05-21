@@ -110,7 +110,7 @@ function PdfThumbnailItem({
           <div className="pdf-thumbnail-skeleton" />
         )}
       </div>
-      <span className="pdf-thumbnail-label">{t("reader.page")} {pageNumber}</span>
+      <span className="pdf-thumbnail-label">{pageNumber}</span>
     </button>
   );
 }

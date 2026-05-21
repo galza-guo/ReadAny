@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_READER_PANELS,
+  READER_WINDOW_MIN_WIDTH,
   READER_SPLIT_HANDLE_SIZE,
   clampReaderColumnPairSizes,
   clampReaderRailSectionPairSizes,
@@ -170,8 +171,8 @@ describe("clampReaderColumnPairSizes", () => {
         delta: 200,
       })
     ).toEqual({
-      leftSize: 680,
-      rightSize: 320,
+      leftSize: 700,
+      rightSize: 300,
     });
   });
 
@@ -191,8 +192,8 @@ describe("clampReaderColumnPairSizes", () => {
         delta: 200,
       })
     ).toEqual({
-      leftSize: 640,
-      rightSize: 280,
+      leftSize: 660,
+      rightSize: 260,
     });
   });
 });
@@ -223,7 +224,7 @@ describe("workspace minimum sizes", () => {
         translation: true,
         chat: true,
       })
-    ).toBe(220 + 360 + 320 + READER_SPLIT_HANDLE_SIZE * 2);
+    ).toBe(180 + 340 + 300 + READER_SPLIT_HANDLE_SIZE * 2);
   });
 
   test("uses the stacked rail when computing minimum workspace height", () => {
@@ -235,5 +236,18 @@ describe("workspace minimum sizes", () => {
         chat: true,
       })
     ).toBe(220 + 180 + READER_SPLIT_HANDLE_SIZE);
+  });
+
+  test("fixed reader window minimum can house the widest pane set", () => {
+    const widestWorkspaceMinWidth = getReaderWorkspaceMinWidth({
+      navigation: true,
+      original: true,
+      translation: true,
+      chat: true,
+    });
+
+    expect(READER_WINDOW_MIN_WIDTH).toBeGreaterThanOrEqual(
+      widestWorkspaceMinWidth + 24 + 2,
+    );
   });
 });

@@ -54,11 +54,12 @@ BYOK translation requests keep the existing flow:
 Managed gateway requests use a separate paid flow:
 
 1. Frontend selects the `readani` managed gateway provider.
-2. Rust backend includes entitlement proof or a gateway-safe token.
-3. The gateway verifies paid access before forwarding to upstream providers.
-4. The app stores translations in the normal cache after success.
+2. Rust backend sends StoreKit 2 subscription proof to PersonalSite `/api/readani/*`.
+3. The trusted PersonalSite `readani` backend verifies paid access server-side.
+4. The trusted backend calls the existing PersonalSite AI gateway with a server-side token.
+5. The app stores translations in the normal cache after success.
 
-The desktop app must never embed upstream provider secrets.
+The desktop app must never embed upstream provider secrets or gateway server tokens.
 
 ## Error Handling
 
@@ -75,11 +76,10 @@ The desktop app must never embed upstream provider secrets.
 - Verify paid entitlement is required before managed gateway requests succeed.
 - Re-test core PDF and EPUB reading in both lanes.
 
-## Next Decision
+## Gateway Trust Decision
 
-Choose the desktop gateway trust model:
+The App Store consumer release uses a trusted `readani` backend inside PersonalSite rather than a direct desktop client contract.
 
-1. Add a dedicated macOS / desktop client contract and app policy for `readani`.
-2. Place a small trusted `readani` backend in front of the existing PersonalSite gateway.
+The app uses StoreKit 2 for subscriptions. For managed AI access, the app sends StoreKit 2 JWS transaction proof to PersonalSite. PersonalSite verifies the subscription server-side, applies `readani` usage policy, then calls the existing shared AI gateway through the gateway's server-to-server token mode.
 
-The recommendation should be based on subscription verification, secret safety, operational simplicity, and whether future non-App-Store builds need managed AI.
+This avoids treating a consumer desktop app as a trusted secret holder. Managed Device Attestation is not part of the first release because it is aimed at managed/enterprise device flows, while `readani` is a consumer Mac App Store app.

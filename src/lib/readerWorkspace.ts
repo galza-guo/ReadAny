@@ -26,6 +26,7 @@ export const DEFAULT_READER_PANELS: ReaderPanelsState = {
 };
 
 export const READER_SPLIT_HANDLE_SIZE = 12;
+export const READER_WINDOW_MIN_WIDTH = 900;
 
 export const READER_COLUMN_DEFAULT_WEIGHTS: Record<ReaderColumnKey, number> = {
   navigation: 260,
@@ -39,10 +40,10 @@ export const READER_RAIL_SECTION_DEFAULT_WEIGHTS: Record<ReaderRailSectionKey, n
 };
 
 export const READER_PANEL_MIN_WIDTHS: Record<ReaderPanelKey, number> = {
-  navigation: 220,
-  original: 360,
-  translation: 320,
-  chat: 280,
+  navigation: 180,
+  original: 340,
+  translation: 300,
+  chat: 260,
 };
 
 export const READER_PANEL_MIN_HEIGHTS: Record<ReaderPanelKey, number> = {

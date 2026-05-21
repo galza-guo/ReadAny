@@ -105,6 +105,14 @@ describe("PanelToggleGroup", () => {
     expect(headerRule).not.toContain("border-bottom");
   });
 
+  test("gives the reader toolbar more top padding with a tighter gap below", () => {
+    const readerShellRule = normalizeWhitespace(appCss.match(/\.app-shell-reader\s*\{([^}]*)\}/)?.[1] ?? "");
+    const headerRule = normalizeWhitespace(appCss.match(/\.app-header\s*\{([^}]*)\}/)?.[1] ?? "");
+
+    expect(readerShellRule).toContain("gap: 8px");
+    expect(headerRule).toContain("padding: 14px 16px 8px");
+  });
+
   test("pins the panel toggle row to the true horizontal center of the toolbar", () => {
     const headerRule = normalizeWhitespace(appCss.match(/\.app-header\s*\{([^}]*)\}/)?.[1] ?? "");
     const leftRule = normalizeWhitespace(appCss.match(/\.header-left\s*\{([^}]*)\}/)?.[1] ?? "");

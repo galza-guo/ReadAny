@@ -15,7 +15,7 @@ import type { NavItem } from "epubjs";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import * as Toolbar from "@radix-ui/react-toolbar";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { AboutDialog } from "./components/AboutDialog";
@@ -99,15 +99,14 @@ import { formatPageCountLabel } from "./lib/pageCountLabel";
 import { getReaderStatusLabel } from "./lib/readerStatus";
 import {
   READER_PANEL_MIN_HEIGHTS,
+  READER_WINDOW_MIN_WIDTH,
   clampReaderColumnPairSizes,
   clampReaderRailSectionPairSizes,
   DEFAULT_READER_PANELS,
   didReaderRailBecomeVisible,
   getReaderColumnLayoutKey,
-  getReaderColumnMinWidth,
   getReaderRailLayoutKey,
   getReaderWorkspaceMinHeight,
-  getReaderWorkspaceMinWidth,
   getVisibleRailSections,
   getVisibleReaderColumns,
   resolveReaderColumnWeights,
@@ -1588,11 +1587,6 @@ function AppContent() {
     [readerRailSectionWeights, visibleRailSections],
   );
 
-  const workspaceMinWidth = useMemo(
-    () => getReaderWorkspaceMinWidth(readerPanels),
-    [readerPanels],
-  );
-
   const workspaceMinHeight = useMemo(
     () => getReaderWorkspaceMinHeight(readerPanels),
     [readerPanels],
@@ -1644,10 +1638,10 @@ function AppContent() {
 
       return {
         flex: `${currentColumnWeights[column] ?? 1} 1 0px`,
-        minWidth: `${getReaderColumnMinWidth(column, readerPanels)}px`,
+        minWidth: 0,
       };
     },
-    [currentColumnWeights, readerPanels, visibleReaderColumns],
+    [currentColumnWeights, visibleReaderColumns],
   );
 
   const getRailSectionStyle = useCallback(
@@ -1873,20 +1867,23 @@ function AppContent() {
 
   useTheme(settings.theme, settings.accentColor);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const shell = readerShellRef.current;
 
     if (appView !== "reader" || !shell) {
-      void getCurrentWindow()
-        .setSizeConstraints(null)
-        .catch(() => {});
+      void (async () => {
+        try {
+          const appWindow = getCurrentWindow();
+          await appWindow.setMinSize(null);
+          await appWindow.setSizeConstraints(null);
+        } catch {
+          // Window constraints are best-effort; layout still works in the web view.
+        }
+      })();
       return;
     }
 
     const shellStyles = window.getComputedStyle(shell);
-    const paddingX =
-      Number.parseFloat(shellStyles.paddingLeft || "0") +
-      Number.parseFloat(shellStyles.paddingRight || "0");
     const paddingY =
       Number.parseFloat(shellStyles.paddingTop || "0") +
       Number.parseFloat(shellStyles.paddingBottom || "0");
@@ -1896,18 +1893,23 @@ function AppContent() {
     const headerHeight = Math.ceil(
       readerHeaderRef.current?.getBoundingClientRect().height ?? 0,
     );
-    const minWidth = Math.ceil(workspaceMinWidth + paddingX);
     const minHeight = Math.ceil(
       workspaceMinHeight + paddingY + headerHeight + rowGap,
     );
 
-    void getCurrentWindow()
-      .setSizeConstraints({
-        minWidth,
-        minHeight,
-      })
-      .catch(() => {});
-  }, [appView, workspaceMinHeight, workspaceMinWidth]);
+    void (async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        await appWindow.setMinSize(new LogicalSize(READER_WINDOW_MIN_WIDTH, minHeight));
+        await appWindow.setSizeConstraints({
+          minWidth: READER_WINDOW_MIN_WIDTH,
+          minHeight,
+        });
+      } catch {
+        // Window constraints are best-effort; layout still works in the web view.
+      }
+    })();
+  }, [appView, workspaceMinHeight]);
 
   useEffect(() => {
     const trimmedBookTitle = currentBookTitle?.trim();
@@ -6862,7 +6864,8 @@ function AppContent() {
           <main
             className="app-main app-main--workspace"
             style={{
-              minWidth: `${workspaceMinWidth}px`,
+              width: "100%",
+              minWidth: 0,
               minHeight: `${workspaceMinHeight}px`,
             }}
           >
