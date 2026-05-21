@@ -94,29 +94,26 @@ describe("HomeView layout", () => {
     expect(homeViewSource).not.toContain('import appIcon');
   });
 
-  test("matches the reader header's expanding theme and settings buttons", () => {
-    expect(homeViewSource).toContain("showHoverLabel={true}");
+  test("keeps the home header actions compact and moves theme control out of the header", () => {
     expect(homeViewSource).toContain('labelDirection="left"');
     expect(homeViewSource).toContain("ExpandableIconButton");
     expect(homeViewSource).toContain("UpdateActionButton");
     expect(homeViewSource).toContain("showUpdateAction");
     expect(homeViewSource).toContain("onInstallUpdate");
-    expect(homeViewSource).toContain('label={t("common.about")}');
-    expect(homeViewSource).toContain("onOpenAbout");
-    expect(homeViewSource).toContain("onClick={onOpenAbout}");
+    expect(homeViewSource).not.toContain('label={t("common.about")}');
+    expect(homeViewSource).not.toContain("onOpenAbout");
+    expect(homeViewSource).not.toContain("onClick={onOpenAbout}");
     expect(homeViewSource).toContain('label={t("common.settings")}');
     expect(homeViewSource).toContain("showTranslationSetupCallout");
     expect(homeViewSource).toContain('className="home-setup-callout"');
+    expect(homeViewSource).not.toContain("ThemeToggleButton");
     expect(homeViewSource).not.toContain('className="home-settings-btn"');
   });
 
-  test("places the About button to the left of the theme toggle in the home header", () => {
-    const aboutIndex = homeViewSource.indexOf('label={t("common.about")}');
-    const themeIndex = homeViewSource.indexOf("<ThemeToggleButton");
-
-    expect(aboutIndex).toBeGreaterThan(-1);
-    expect(themeIndex).toBeGreaterThan(-1);
-    expect(aboutIndex).toBeLessThan(themeIndex);
+  test("keeps About out of the home header now that it lives in Settings", () => {
+    expect(homeViewSource).not.toContain('aria-label={t("common.about")}');
+    expect(homeViewSource).not.toContain("<Info");
+    expect(homeViewSource).toContain('label={t("common.settings")}');
   });
 
   test("shares the reader header's top-right anchor spacing so the icon row does not jump between views", () => {
@@ -126,7 +123,7 @@ describe("HomeView layout", () => {
     const homeHeaderActionsRule =
       appCss.match(/\.home-header-actions\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(appHeaderRule).toContain("padding: 10px 16px");
+    expect(appHeaderRule).toContain("padding: 14px 16px 8px");
     expect(headerRightRule).toContain("gap: 10px");
     expect(homeHeaderRule).toContain("padding: 22px 28px 0");
     expect(homeHeaderActionsRule).toContain("gap: 10px");
@@ -146,11 +143,8 @@ describe("HomeView layout", () => {
       <HomeView
         onOpenBook={() => {}}
         onOpenFile={() => {}}
-        onOpenAbout={() => {}}
         onOpenSettings={() => {}}
         showTranslationSetupCallout={true}
-        theme="system"
-        onThemeToggle={() => {}}
       />
     );
 
@@ -168,11 +162,8 @@ describe("HomeView layout", () => {
       <HomeView
         onOpenBook={() => {}}
         onOpenFile={() => {}}
-        onOpenAbout={() => {}}
         onOpenSettings={() => {}}
         openingDocumentTitle="Long PDF"
-        theme="system"
-        onThemeToggle={() => {}}
       />
     );
 

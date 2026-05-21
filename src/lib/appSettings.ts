@@ -428,18 +428,6 @@ function normalizeConcreteLanguage(
   };
 }
 
-export function getNextThemeMode(theme: ThemeMode): ThemeMode {
-  if (theme === "system") {
-    return "light";
-  }
-
-  if (theme === "light") {
-    return "dark";
-  }
-
-  return "system";
-}
-
 export function normalizeAutoTranslateNextPages(value?: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_AUTO_TRANSLATE_NEXT_PAGES;

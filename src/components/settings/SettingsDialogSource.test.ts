@@ -38,6 +38,8 @@ describe("settings dialog focus behavior", () => {
 
     expect(appSource).toContain('import { SettingsDialog } from "./components/settings/SettingsDialog";');
     expect(appSource).toContain("<SettingsDialog");
+    expect(appSource).not.toContain('import { AboutDialog }');
+    expect(appSource).not.toContain("<AboutDialog");
     expect(appSource).not.toContain('import * as Dialog from "@radix-ui/react-dialog";');
     expect(appSource).not.toContain("<Dialog.Content");
   });
@@ -50,6 +52,28 @@ describe("settings dialog focus behavior", () => {
     expect(appSource).toContain('t("dialog.discardUnsavedChangesTitle")');
     expect(appSource).not.toContain("discardAllUnsavedSettings");
     expect(appSource).not.toContain("handleSettingsDone");
+  });
+
+  test("home no longer owns an About action now that About is a settings tab", () => {
+    const appSource = readAppSource();
+
+    expect(appSource).not.toContain("onOpenAbout=");
+    expect(appSource).not.toContain('handleOpenSettings("about")');
+    expect(appSource).toContain("initialTab={settingsInitialTab}");
+  });
+
+  test("settings opener falls back to General when called by a click handler", () => {
+    const appSource = readAppSource();
+    const settingsContentSource = readFileSync(
+      resolve(import.meta.dir, "SettingsDialogContent.tsx"),
+      "utf8",
+    );
+
+    expect(appSource).toContain("function normalizeSettingsTab(value: unknown): SettingsTab");
+    expect(appSource).toContain("const nextInitialTab = normalizeSettingsTab(initialTab);");
+    expect(appSource).toContain("setSettingsInitialTab(nextInitialTab);");
+    expect(settingsContentSource).toContain("function normalizeSettingsTab(value: unknown): SettingsTab");
+    expect(settingsContentSource).toContain("const normalizedInitialTab = normalizeSettingsTab(initialTab);");
   });
 
   test("app only persists a preset before activation when that preset actually has unsaved changes", () => {

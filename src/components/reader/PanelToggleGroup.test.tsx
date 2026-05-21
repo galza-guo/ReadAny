@@ -24,12 +24,12 @@ describe("PanelToggleGroup", () => {
       </Toolbar.Root>
     );
 
-    expect(html).toContain('class="panel-toggle-group"');
+    expect(html).toContain('class="segmented-toggle segmented-toggle--four panel-toggle-group"');
     expect(html).toContain(">Navigate<");
     expect(html).toContain(">Original<");
     expect(html).toContain(">Translate<");
     expect(html).toContain(">AI Chat<");
-    expect(html).toContain('class="panel-toggle-btn is-active"');
+    expect(html).toContain('class="segmented-toggle-item panel-toggle-btn is-active"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('aria-pressed="false"');
   });
@@ -63,37 +63,38 @@ describe("PanelToggleGroup", () => {
     );
 
     expect(html).toMatch(
-      /<button[^>]*class="panel-toggle-btn is-active"[^>]*disabled=""[^>]*>Original<\/button>/
+      /<button[^>]*class="segmented-toggle-item panel-toggle-btn is-active"[^>]*disabled=""[^>]*>Original<\/button>/
     );
   });
 
   test("styles the toggle row as text-only labels in an even grid", () => {
-    const groupRule = normalizeWhitespace(appCss.match(/\.panel-toggle-group\s*\{([^}]*)\}/)?.[1] ?? "");
+    const groupRule = normalizeWhitespace(appCss.match(/\.segmented-toggle\s*\{([^}]*)\}/)?.[1] ?? "");
+    const fourColumnRule = normalizeWhitespace(appCss.match(/\.segmented-toggle--four\s*\{([^}]*)\}/)?.[1] ?? "");
 
     expect(groupRule).toContain("display: grid");
-    expect(groupRule).toContain("grid-template-columns: repeat(4, minmax(0, 1fr))");
+    expect(fourColumnRule).toContain("grid-template-columns: repeat(4, minmax(0, 1fr))");
     expect(groupRule).not.toContain("border:");
-    expect(groupRule).not.toContain("background:");
+    expect(groupRule).toContain("background: transparent");
     expect(groupRule).not.toContain("box-shadow:");
   });
 
-  test("uses text and underline states instead of button chrome", () => {
-    const buttonRule = normalizeWhitespace(appCss.match(/\.panel-toggle-btn\s*\{([^}]*)\}/)?.[1] ?? "");
-    const activeRule = appCss.match(/\.panel-toggle-btn\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
-    const activeIndicatorRule =
-      appCss.match(/\.panel-toggle-btn\.is-active::after\s*\{([^}]*)\}/)?.[1] ?? "";
+  test("uses accent label states instead of button chrome", () => {
+    const buttonRule = normalizeWhitespace(appCss.match(/\.segmented-toggle-item\s*\{([^}]*)\}/)?.[1] ?? "");
+    const activeRule = appCss.match(/\.segmented-toggle-item\.is-active,\s*\.segmented-toggle-item\[data-state="active"\],\s*\.segmented-toggle-item\[data-state="on"\]\s*\{([^}]*)\}/)?.[1] ?? "";
     const hoverRule =
-      appCss.match(/\.panel-toggle-btn:hover:not\(:disabled\)\s*\{([^}]*)\}/)?.[1] ?? "";
+      appCss.match(/\.segmented-toggle-item:hover:not\(:disabled\)\s*\{([^}]*)\}/)?.[1] ?? "";
     const pressedRule =
-      appCss.match(/\.panel-toggle-btn:active:not\(:disabled\)\s*\{([^}]*)\}/)?.[1] ?? "";
+      appCss.match(/\.segmented-toggle-item:active:not\(:disabled\)\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(buttonRule).toContain("background: transparent");
     expect(buttonRule).toContain("border: 0");
     expect(hoverRule).not.toContain("background");
+    expect(hoverRule).toContain("color: var(--accent)");
+    expect(activeRule).toContain("color: var(--accent-strong)");
     expect(activeRule).toContain("font-weight: 700");
     expect(activeRule).not.toContain("background");
     expect(activeRule).not.toContain("box-shadow");
-    expect(activeIndicatorRule).toContain("opacity: 1");
+    expect(appCss).not.toContain(".segmented-toggle-item::after");
     expect(pressedRule).toContain("color: var(--accent-strong)");
     expect(pressedRule).toContain("transform: translateY(1px)");
   });

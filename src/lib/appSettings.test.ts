@@ -11,7 +11,6 @@ import {
   getPresetMissingRequirement,
   getPresetSaveStatus,
   getPresetValidationState,
-  getNextThemeMode,
   getActivePreset,
   getDefaultBaseUrlForProvider,
   getDefaultModelForProvider,
@@ -112,12 +111,6 @@ describe("app settings helpers", () => {
       code: "system",
       label: "Follow system",
     });
-  });
-
-  test("cycles themes in system, light, dark order", () => {
-    expect(getNextThemeMode("system")).toBe("light");
-    expect(getNextThemeMode("light")).toBe("dark");
-    expect(getNextThemeMode("dark")).toBe("system");
   });
 
   test("starts with no presets for a brand-new user", () => {

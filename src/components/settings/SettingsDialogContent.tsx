@@ -2,15 +2,21 @@ import {
 	CaretDown,
 	CheckCircle,
 	CheckFat,
+	Database,
+	Desktop,
 	Flask,
 	FloppyDisk,
 	Gauge,
+	GearSix,
 	HandArrowDown,
+	Info,
+	Moon,
 	PencilSimple,
 	Plugs,
 	PlugsConnected,
 	Plus,
 	Question,
+	Sun,
 	Trash,
 	TrashSimple,
 	X,
@@ -20,6 +26,7 @@ import * as Label from "@radix-ui/react-label";
 import * as Popover from "@radix-ui/react-popover";
 import * as Select from "@radix-ui/react-select";
 import * as Tabs from "@radix-ui/react-tabs";
+import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import {
 	Fragment,
@@ -59,6 +66,7 @@ import type {
 	PresetSaveStatus,
 	PresetTestResult,
 	ProviderReasoningMode,
+	ThemeMode,
 	TranslationCacheSummary,
 	TranslationPreset,
 	TranslationProviderKind,
@@ -68,11 +76,28 @@ import { ConfirmationDialog } from "../ConfirmationDialog";
 import { ExpandableIconButton } from "../reader/ExpandableIconButton";
 import { FileIcon } from "../FileIcon";
 import { useToast } from "../toast/ToastProvider";
+import { AboutSettingsPanel } from "./AboutSettingsPanel";
 import { LanguageCombobox } from "./LanguageCombobox";
 import { ProviderBrandIcon } from "./providerIcons";
 
+export type SettingsTab = "general" | "providers" | "cache" | "about";
+
+const SETTINGS_TABS = new Set<SettingsTab>([
+	"general",
+	"providers",
+	"cache",
+	"about",
+]);
+
+function normalizeSettingsTab(value: unknown): SettingsTab {
+	return typeof value === "string" && SETTINGS_TABS.has(value as SettingsTab)
+		? (value as SettingsTab)
+		: "general";
+}
+
 export type SettingsDialogContentProps = {
 	settings: TranslationSettings;
+	initialTab?: SettingsTab;
 	liveActivePresetId: string;
 	sessionFallbackPresetId?: string | null;
 	editingPresetId: string | null;
@@ -112,6 +137,10 @@ export type SettingsDialogContentProps = {
 	) => void | Promise<void>;
 	onTestPreset: (presetId: string) => void | Promise<void>;
 	onTestAllPresets: () => void | Promise<void>;
+	onCheckForUpdates: () => void;
+	onOpenLatestRelease: () => void;
+	updateActionsEnabled?: boolean;
+	updateStatusMessage?: string | null;
 };
 
 const AUTO_TRANSLATE_NEXT_PAGE_OPTIONS = [
@@ -121,6 +150,16 @@ const AUTO_TRANSLATE_NEXT_PAGE_OPTIONS = [
 	{ value: 5, label: "5" },
 	{ value: 10, label: "10" },
 	{ value: 20, label: "20" },
+];
+
+const THEME_MODE_OPTIONS: Array<{
+	value: ThemeMode;
+	label: string;
+	icon: typeof Desktop;
+}> = [
+	{ value: "system", label: "System", icon: Desktop },
+	{ value: "light", label: "Light", icon: Sun },
+	{ value: "dark", label: "Dark", icon: Moon },
 ];
 
 const DEEPSEEK_THINKING_OPTIONS: Array<{
@@ -388,6 +427,7 @@ function formatCacheSize(bytes: number) {
 
 export function SettingsDialogContent({
 	settings,
+	initialTab = "general",
 	liveActivePresetId,
 	sessionFallbackPresetId = null,
 	editingPresetId,
@@ -420,7 +460,12 @@ export function SettingsDialogContent({
 	onFetchPresetModels,
 	onTestPreset,
 	onTestAllPresets,
+	onCheckForUpdates,
+	onOpenLatestRelease,
+	updateActionsEnabled = true,
+	updateStatusMessage,
 }: SettingsDialogContentProps) {
+	const normalizedInitialTab = normalizeSettingsTab(initialTab);
 	const appLanguageSearchPlaceholder = hasLocaleMessage(
 		"languages.searchSupported",
 	)
@@ -444,6 +489,11 @@ export function SettingsDialogContent({
 		title: string;
 		languageCode: string;
 	} | null>(null);
+	const [activeTab, setActiveTab] = useState<SettingsTab>(normalizedInitialTab);
+
+	useEffect(() => {
+		setActiveTab(normalizedInitialTab);
+	}, [normalizedInitialTab]);
 	const [pendingDeleteAllCache, setPendingDeleteAllCache] = useState(false);
 	const [providerPickerOpen, setProviderPickerOpen] = useState(false);
 	const [renamingPresetId, setRenamingPresetId] = useState<string | null>(null);
@@ -662,28 +712,42 @@ export function SettingsDialogContent({
 
 	return (
 		<Tooltip.Provider delayDuration={250}>
-			<Tabs.Root className="settings-tabs" defaultValue="general">
+			<Tabs.Root
+				className="settings-tabs"
+				onValueChange={(value) => setActiveTab(value as SettingsTab)}
+				value={activeTab}
+			>
 				<Tabs.List
 					aria-label={t("reader.settingsSections")}
-					className="panel-toggle-group settings-tabs-list"
+					className="segmented-toggle segmented-toggle--four panel-toggle-group settings-tabs-list"
 				>
 					<Tabs.Trigger
-						className="panel-toggle-btn settings-tab-trigger"
+						className="segmented-toggle-item panel-toggle-btn settings-tab-trigger"
 						value="general"
 					>
+						<GearSix className="settings-tab-icon" size={16} weight="regular" />
 						{t("settings.tabs.general")}
 					</Tabs.Trigger>
 					<Tabs.Trigger
-						className="panel-toggle-btn settings-tab-trigger"
+						className="segmented-toggle-item panel-toggle-btn settings-tab-trigger"
 						value="providers"
 					>
+						<Plugs className="settings-tab-icon" size={16} weight="regular" />
 						{t("settings.tabs.providers")}
 					</Tabs.Trigger>
 					<Tabs.Trigger
-						className="panel-toggle-btn settings-tab-trigger"
+						className="segmented-toggle-item panel-toggle-btn settings-tab-trigger"
 						value="cache"
 					>
+						<Database className="settings-tab-icon" size={16} weight="regular" />
 						{t("settings.tabs.cache")}
+					</Tabs.Trigger>
+					<Tabs.Trigger
+						className="segmented-toggle-item panel-toggle-btn settings-tab-trigger"
+						value="about"
+					>
+						<Info className="settings-tab-icon" size={16} weight="regular" />
+						{t("common.about")}
 					</Tabs.Trigger>
 				</Tabs.List>
 
@@ -802,6 +866,51 @@ export function SettingsDialogContent({
 										</Select.Content>
 									</Select.Portal>
 								</Select.Root>
+							</div>
+						</div>
+						<div className="settings-block settings-block-inline">
+							<Label.Root
+								className="settings-label type-field-label"
+								htmlFor="theme-toggle-group"
+							>
+								{t("theme.switch")}
+							</Label.Root>
+							<div className="settings-inline-control">
+								<ToggleGroup.Root
+									aria-label={t("theme.switch")}
+									className="segmented-toggle segmented-toggle--three theme-toggle-group"
+									id="theme-toggle-group"
+									onValueChange={(theme) => {
+										if (!theme) {
+											return;
+										}
+
+										void Promise.resolve(
+											onSettingsChange({
+												...settings,
+												theme: theme as ThemeMode,
+											}),
+										).catch(() => {});
+									}}
+									type="single"
+									value={settings.theme}
+								>
+									{THEME_MODE_OPTIONS.map((option) => {
+										const Icon = option.icon;
+										return (
+											<ToggleGroup.Item
+												aria-label={`${option.label} theme`}
+												className="segmented-toggle-item theme-toggle-item"
+												data-theme-mode={option.value}
+												key={option.value}
+												value={option.value}
+											>
+												<Icon size={15} weight="regular" />
+												<span>{option.label}</span>
+											</ToggleGroup.Item>
+										);
+									})}
+								</ToggleGroup.Root>
 							</div>
 						</div>
 						<div className="settings-block settings-block-inline">
@@ -1732,6 +1841,15 @@ export function SettingsDialogContent({
 							</ul>
 						)}
 					</div>
+				</Tabs.Content>
+
+				<Tabs.Content className="settings-content" forceMount value="about">
+					<AboutSettingsPanel
+						onCheckForUpdates={onCheckForUpdates}
+						onOpenLatestRelease={onOpenLatestRelease}
+						updateActionsEnabled={updateActionsEnabled}
+						updateStatusMessage={updateStatusMessage}
+					/>
 				</Tabs.Content>
 			</Tabs.Root>
 

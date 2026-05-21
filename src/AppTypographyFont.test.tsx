@@ -104,7 +104,9 @@ describe("app typography font roles", () => {
     expect(settingsLanguageToggleRule).toContain("font-family: inherit");
     expect(settingsLanguageToggleRule).toContain("font-size: var(--type-size-label)");
     expect(settingsTabTriggerRule).toContain("min-height: 36px");
-    expect(settingsDialogContentSource).toContain('className="panel-toggle-btn settings-tab-trigger"');
+    expect(settingsDialogContentSource).toContain(
+      'className="segmented-toggle-item panel-toggle-btn settings-tab-trigger"'
+    );
     expect(statusRule).toContain("font-size: var(--type-size-meta)");
   });
 
@@ -118,7 +120,7 @@ describe("app typography font roles", () => {
     const pageJumpTotalRule = getRule(
       /(?:^|\n)\.pdf-page-jump-total\s*\{([^}]*)\}/
     );
-    const panelToggleRule = getRule(/(?:^|\n)\.panel-toggle-btn\s*\{([^}]*)\}/);
+    const panelToggleRule = getRule(/(?:^|\n)\.segmented-toggle-item\s*\{([^}]*)\}/);
 
     expect(settingsLabelRule).toContain("font-size: 15px");
     expect(pageLabelRule).toContain("font-size: var(--type-size-label)");

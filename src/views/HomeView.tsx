@@ -2,12 +2,11 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { BookOpen, Info, GearSix, Trash } from "@phosphor-icons/react";
+import { BookOpen, GearSix, Trash } from "@phosphor-icons/react";
 import { ExpandableIconButton } from "../components/reader/ExpandableIconButton";
 import { FileIcon } from "../components/FileIcon";
-import { ThemeToggleButton } from "../components/ThemeToggleButton";
 import { UpdateActionButton } from "../components/UpdateActionButton";
-import type { RecentBook, ThemeMode } from "../types";
+import type { RecentBook } from "../types";
 import readaniBannerForDarkTheme from "../assets/readani-banner-dark-theme.png";
 import readaniBannerForLightTheme from "../assets/readani-banner-light-theme.png";
 import { t } from "../lib/i18n";
@@ -15,11 +14,8 @@ import { t } from "../lib/i18n";
 type HomeViewProps = {
   onOpenBook: (book: RecentBook) => void;
   onOpenFile: () => void;
-  onOpenAbout: () => void;
   onOpenSettings: () => void;
   showTranslationSetupCallout?: boolean;
-  theme: ThemeMode;
-  onThemeToggle: () => void;
   showUpdateAction?: boolean;
   onInstallUpdate?: () => void;
   openingDocumentTitle?: string | null;
@@ -44,11 +40,8 @@ function formatRelativeTime(dateString: string): string {
 export function HomeView({
   onOpenBook,
   onOpenFile,
-  onOpenAbout,
   onOpenSettings,
   showTranslationSetupCallout = false,
-  theme,
-  onThemeToggle,
   showUpdateAction = false,
   onInstallUpdate,
   openingDocumentTitle = null,
@@ -103,21 +96,6 @@ export function HomeView({
             {showUpdateAction && onInstallUpdate ? (
               <UpdateActionButton onClick={onInstallUpdate} />
             ) : null}
-            <ExpandableIconButton
-              aria-label={t("common.about")}
-              label={t("common.about")}
-              labelDirection="left"
-              onClick={onOpenAbout}
-            >
-              <Info size={18} />
-            </ExpandableIconButton>
-            <ThemeToggleButton
-              theme={theme}
-              onToggle={onThemeToggle}
-              showHoverLabel={true}
-              labelDirection="left"
-              hoverLabel={t("theme.switch")}
-            />
             <ExpandableIconButton
               aria-label={t("common.settings")}
               label={t("common.settings")}

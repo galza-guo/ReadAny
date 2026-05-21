@@ -9,6 +9,8 @@ export const READANI_UPSTREAM_AUTHOR_NAME = "Everett (everettjf)";
 export const READANI_UPSTREAM_AUTHOR_URL = "https://github.com/everettjf";
 export const READANI_UPSTREAM_REPO_NAME = "PDFRead";
 export const READANI_UPSTREAM_REPO_URL = "https://github.com/everettjf/PDFRead";
+export const READANI_PHOSPHOR_NAME = "Phosphor Icons";
+export const READANI_PHOSPHOR_URL = "https://phosphoricons.com";
 export const READANI_RELEASES_URL = "https://github.com/galza-guo/readani/releases/latest";
 
 export async function getReadaniRuntimeVersion(): Promise<string> {
@@ -32,7 +34,6 @@ function formatBuildTimestamp(timestamp: string): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    second: "2-digit",
     timeZoneName: "short",
   }).format(parsedTimestamp);
 }

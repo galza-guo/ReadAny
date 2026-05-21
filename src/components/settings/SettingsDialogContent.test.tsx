@@ -4,7 +4,13 @@ import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import settingsDialogSource from "./SettingsDialogContent.tsx?raw";
 import { ToastProvider } from "../toast/ToastProvider";
-import { SettingsDialogContent, type SettingsDialogContentProps } from "./SettingsDialogContent";
+import type { SettingsDialogContentProps } from "./SettingsDialogContent";
+
+(globalThis as typeof globalThis & { __READANI_APP_VERSION__: string }).__READANI_APP_VERSION__ = "test";
+(globalThis as typeof globalThis & { __READANI_BUILD_TIMESTAMP__: string }).__READANI_BUILD_TIMESTAMP__ =
+  "2026-01-01T00:00:00.000Z";
+
+const { SettingsDialogContent } = await import("./SettingsDialogContent");
 
 function renderSettings(overrides: Partial<SettingsDialogContentProps> = {}) {
   return renderToStaticMarkup(
@@ -95,18 +101,26 @@ function buildProps(
     onFetchPresetModels: () => {},
     onTestPreset: () => {},
     onTestAllPresets: () => {},
+    onCheckForUpdates: () => {},
+    onOpenLatestRelease: () => {},
     ...overrides,
   };
 }
 
 describe("SettingsDialogContent", () => {
-  test("renders tabs for general, providers, and cache", () => {
+  test("renders tabs for general, providers, cache, and about", () => {
     const html = renderSettings();
 
     expect(html).toContain(">General<");
     expect(html).toContain(">Providers<");
     expect(html).toContain(">Cache<");
+    expect(html).toContain(">About<");
     expect(settingsDialogSource).toContain("settings-tabs-list");
+    expect(settingsDialogSource).toContain('className="settings-tab-icon"');
+    expect(settingsDialogSource).toContain("<GearSix");
+    expect(settingsDialogSource).toContain("<Plugs");
+    expect(settingsDialogSource).toContain("<Database");
+    expect(settingsDialogSource).toContain("<Info");
   });
 
   test("renders app language and translate-to labels without helper copy", () => {
@@ -141,6 +155,35 @@ describe("SettingsDialogContent", () => {
       expect(settingsDialogSource).toContain(`label: "${label}"`);
     });
     expect(settingsDialogSource).not.toContain("0 turns it off.");
+  });
+
+  test("renders theme as a three-part general setting", () => {
+    const html = renderSettings({
+      settings: {
+        ...buildProps().settings,
+        theme: "dark",
+      },
+    });
+
+    expect(html).toContain("Theme");
+    expect(html).toContain('aria-label="Theme"');
+    expect(html).toContain('data-theme-mode="system"');
+    expect(html).toContain('data-theme-mode="light"');
+    expect(html).toContain('data-theme-mode="dark"');
+    expect(settingsDialogSource).toContain("theme-toggle-group");
+    expect(settingsDialogSource).toContain("onValueChange={(theme)");
+    expect(settingsDialogSource.indexOf('id="auto-translate-next-pages"')).toBeLessThan(
+      settingsDialogSource.indexOf('id="theme-toggle-group"')
+    );
+    expect(settingsDialogSource.indexOf('id="theme-toggle-group"')).toBeLessThan(
+      settingsDialogSource.indexOf('id="accent-color-picker"')
+    );
+    expect(
+      settingsStylesSource.match(/\.theme-toggle-group\s*\{([^}]*)\}/)?.[1] ?? ""
+    ).not.toContain("border:");
+    expect(
+      settingsStylesSource.match(/\.segmented-toggle\s*\{([^}]*)\}/)?.[1] ?? ""
+    ).toContain("background: transparent");
   });
 
   test("renders the automatic fallback switch with the experimental flask badge", () => {

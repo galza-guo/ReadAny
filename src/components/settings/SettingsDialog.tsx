@@ -3,6 +3,7 @@ import { X } from "@phosphor-icons/react";
 import {
   SettingsDialogContent,
   type SettingsDialogContentProps,
+  type SettingsTab,
 } from "./SettingsDialogContent";
 import { t } from "../../lib/i18n";
 
@@ -10,6 +11,7 @@ type SettingsDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   closeDisabled?: boolean;
+  initialTab?: SettingsTab;
   contentProps: SettingsDialogContentProps;
 };
 
@@ -17,6 +19,7 @@ export function SettingsDialog({
   open,
   onOpenChange,
   closeDisabled = false,
+  initialTab = "general",
   contentProps,
 }: SettingsDialogProps) {
   return (
@@ -50,7 +53,7 @@ export function SettingsDialog({
             </button>
           </div>
           <div className="settings-dialog-body">
-            <SettingsDialogContent {...contentProps} />
+            <SettingsDialogContent {...contentProps} initialTab={initialTab} />
           </div>
         </Dialog.Content>
       </Dialog.Portal>

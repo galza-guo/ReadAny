@@ -18,7 +18,11 @@ export function PanelToggleGroup({ panels, onToggle }: PanelToggleGroupProps) {
   const visiblePanelCount = Object.values(panels).filter(Boolean).length;
 
   return (
-    <div className="panel-toggle-group" role="group" aria-label={t("reader.panels")}>
+    <div
+      className="segmented-toggle segmented-toggle--four panel-toggle-group"
+      role="group"
+      aria-label={t("reader.panels")}
+    >
       {PANEL_CONTROLS.map((panel) => {
         const isActive = panels[panel.key];
         const isLastVisible = isActive && visiblePanelCount === 1;
@@ -26,7 +30,7 @@ export function PanelToggleGroup({ panels, onToggle }: PanelToggleGroupProps) {
         return (
           <Toolbar.Button
             key={panel.key}
-            className={`panel-toggle-btn ${isActive ? "is-active" : ""}`}
+            className={`segmented-toggle-item panel-toggle-btn ${isActive ? "is-active" : ""}`}
             aria-pressed={isActive}
             disabled={isLastVisible}
             onClick={() => onToggle(panel.key)}

@@ -18,7 +18,6 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import * as Toolbar from "@radix-ui/react-toolbar";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { AboutDialog } from "./components/AboutDialog";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { PdfNavigationSidebar } from "./components/PdfNavigationSidebar";
 import { PdfViewer } from "./components/PdfViewer";
@@ -36,7 +35,7 @@ import { ExpandableIconButton } from "./components/reader/ExpandableIconButton";
 import { PageNavigationToolbar } from "./components/reader/PageNavigationToolbar";
 import { PanelToggleGroup } from "./components/reader/PanelToggleGroup";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
-import { ThemeToggleButton } from "./components/ThemeToggleButton";
+import type { SettingsTab } from "./components/settings/SettingsDialogContent";
 import { ToastProvider, useToast } from "./components/toast/ToastProvider";
 import { useAppUpdates } from "./hooks/useAppUpdates";
 import { useTheme } from "./hooks/useTheme";
@@ -51,7 +50,6 @@ import {
   getDefaultModelForProvider,
   getPresetMissingRequirement,
   getPresetSaveStatus,
-  getNextThemeMode,
   getPresetValidationState,
   hasPresetTranslationContext,
   hasUsableLiveTranslationSetup,
@@ -204,6 +202,19 @@ pdfjsLib.GlobalWorkerOptions.workerPort = getPdfJsWorkerPort();
 const DEFAULT_SETTINGS: TranslationSettings = {
   ...createDefaultSettings(),
 };
+
+const SETTINGS_TABS = new Set<SettingsTab>([
+  "general",
+  "providers",
+  "cache",
+  "about",
+]);
+
+function normalizeSettingsTab(value: unknown): SettingsTab {
+  return typeof value === "string" && SETTINGS_TABS.has(value as SettingsTab)
+    ? (value as SettingsTab)
+    : "general";
+}
 
 const ZOOM_LEVELS = [0.75, 1, 1.25, 1.5, 2];
 const PDF_KEYBOARD_ZOOM_STEP = 0.05;
@@ -631,8 +642,9 @@ function AppContent() {
     useState<ReaderColumnWeightsByLayout>({});
   const [readerRailSectionWeights, setReaderRailSectionWeights] =
     useState<ReaderRailSectionWeightsByLayout>({});
-  const [aboutOpen, setAboutOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] =
+    useState<SettingsTab>("general");
   const [missingRecentBook, setMissingRecentBook] = useState<RecentBook | null>(
     null,
   );
@@ -2111,15 +2123,6 @@ function AppContent() {
     );
   }, []);
 
-  const handleThemeToggle = useCallback(() => {
-    const nextSettings = {
-      ...settings,
-      theme: getNextThemeMode(settings.theme),
-    };
-    setSettings(nextSettings);
-    void persistSettings(nextSettings);
-  }, [persistSettings, settings]);
-
   const loadPdfFromPath = useCallback(
     async (
       filePath: string,
@@ -3096,30 +3099,35 @@ function AppContent() {
     }
   }, [showToast]);
 
-  const handleOpenSettings = useCallback(() => {
-    clearPendingPresetAutosave();
-    updateSettingsDraftState(settings);
-    setEditingPresetId(null);
-    setApiKeyEditingPresetId(null);
-    setPresetApiKeyDrafts({});
-    setPresetStatuses({});
-    setPresetTestRunningId(null);
-    const nextSaveStatuses = buildInitialPresetSaveStatuses(settings);
-    presetSaveStatusByIdRef.current = nextSaveStatuses;
-    setPresetSaveStatusById(nextSaveStatuses);
-    setPresetModelsLoadingById({});
-    setPresetModels({});
-    setPresetModelMessages({});
-    setPresetModelAutoLoadAttempts({});
-    setSettingsClosePending(false);
-    setSettingsCloseConfirmOpen(false);
-    setSettingsOpen(true);
-  }, [
-    buildInitialPresetSaveStatuses,
-    clearPendingPresetAutosave,
-    settings,
-    updateSettingsDraftState,
-  ]);
+  const handleOpenSettings = useCallback(
+    (initialTab?: unknown) => {
+      const nextInitialTab = normalizeSettingsTab(initialTab);
+      clearPendingPresetAutosave();
+      updateSettingsDraftState(settings);
+      setSettingsInitialTab(nextInitialTab);
+      setEditingPresetId(null);
+      setApiKeyEditingPresetId(null);
+      setPresetApiKeyDrafts({});
+      setPresetStatuses({});
+      setPresetTestRunningId(null);
+      const nextSaveStatuses = buildInitialPresetSaveStatuses(settings);
+      presetSaveStatusByIdRef.current = nextSaveStatuses;
+      setPresetSaveStatusById(nextSaveStatuses);
+      setPresetModelsLoadingById({});
+      setPresetModels({});
+      setPresetModelMessages({});
+      setPresetModelAutoLoadAttempts({});
+      setSettingsClosePending(false);
+      setSettingsCloseConfirmOpen(false);
+      setSettingsOpen(true);
+    },
+    [
+      buildInitialPresetSaveStatuses,
+      clearPendingPresetAutosave,
+      settings,
+      updateSettingsDraftState,
+    ],
+  );
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -3834,6 +3842,7 @@ function AppContent() {
           autoFallbackEnabled: nextSettings.autoFallbackEnabled,
           autoTranslateNextPages: nextSettings.autoTranslateNextPages,
           translateAllSlowMode: nextSettings.translateAllSlowMode,
+          theme: nextSettings.theme,
           accentColor: nextSettings.accentColor,
         });
 
@@ -3846,6 +3855,7 @@ function AppContent() {
                 autoFallbackEnabled: savedSettings.autoFallbackEnabled,
                 autoTranslateNextPages: savedSettings.autoTranslateNextPages,
                 translateAllSlowMode: savedSettings.translateAllSlowMode,
+                theme: savedSettings.theme,
                 accentColor: savedSettings.accentColor,
               }
             : settingsDraftRef.current,
@@ -6616,12 +6626,21 @@ function AppContent() {
     onFetchPresetModels: handleFetchPresetModels,
     onTestPreset: handleTestPreset,
     onTestAllPresets: handleTestAllPresets,
+    onCheckForUpdates: () => {
+      void handleCheckForUpdates("manual");
+    },
+    onOpenLatestRelease: () => {
+      void handleOpenLatestRelease();
+    },
+    updateActionsEnabled,
+    updateStatusMessage: aboutUpdateStatusMessage,
   };
 
   const sharedSettingsDialog = (
     <SettingsDialog
       contentProps={settingsDialogProps}
       closeDisabled={settingsClosePending}
+      initialTab={settingsInitialTab}
       onOpenChange={handleSettingsOpenChange}
       open={settingsOpen}
     />
@@ -6756,21 +6775,6 @@ function AppContent() {
       title={t("dialog.deleteHighlightAndNoteTitle")}
     />
   );
-  const sharedAboutDialog = (
-    <AboutDialog
-      onCheckForUpdates={() => {
-        void handleCheckForUpdates("manual");
-      }}
-      onOpenChange={setAboutOpen}
-      onOpenLatestRelease={() => {
-        void handleOpenLatestRelease();
-      }}
-      open={aboutOpen}
-      updateActionsEnabled={updateActionsEnabled}
-      updateStatusMessage={aboutUpdateStatusMessage}
-    />
-  );
-
   const nextColumnAfterNavigation = visibleReaderColumns.includes("navigation")
     ? (visibleReaderColumns.find((column) => column !== "navigation") ?? null)
     : null;
@@ -6793,7 +6797,6 @@ function AppContent() {
       <HomeView
         onOpenBook={handleOpenBook}
         onOpenFile={handleOpenFile}
-        onOpenAbout={() => setAboutOpen(true)}
         onInstallUpdate={() => {
           void handleInstallUpdate();
         }}
@@ -6802,8 +6805,6 @@ function AppContent() {
           settingsLoaded && !activePresetHasLiveSetup
         }
         showUpdateAction={showReadyUpdateAction}
-        theme={settings.theme}
-        onThemeToggle={handleThemeToggle}
         openingDocumentTitle={openingDocumentTitle}
       />
     ) : (
@@ -6843,19 +6844,11 @@ function AppContent() {
               >
                 <HighlighterCircle size={20} weight="regular" />
               </ExpandableIconButton>
-              <ThemeToggleButton
-                className=""
-                theme={settings.theme}
-                onToggle={handleThemeToggle}
-                showHoverLabel={true}
-                labelDirection="left"
-                hoverLabel={t("theme.switch")}
-              />
               <ExpandableIconButton
                 aria-label={t("common.settings")}
                 label={t("common.settings")}
                 labelDirection="left"
-                onClick={handleOpenSettings}
+                onClick={() => handleOpenSettings()}
               >
                 <Gear size={18} weight="regular" />
               </ExpandableIconButton>
@@ -7250,7 +7243,6 @@ function AppContent() {
   return (
     <>
       {viewContent}
-      {sharedAboutDialog}
       {sharedSettingsDialog}
       {settingsDiscardDialog}
       {missingRecentBookDialog}
