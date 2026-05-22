@@ -1,6 +1,8 @@
 mod app_settings;
 mod page_cache;
 mod providers;
+mod readani_gateway;
+mod storekit;
 
 use app_settings::{
     merge_app_settings, migrate_legacy_translation_providers, preset_cache_provider_id,
@@ -18,6 +20,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::future::Future;
 use std::path::PathBuf;
+use storekit::{
+    get_readani_subscription_status, purchase_readani_subscription, restore_readani_subscription,
+};
 use tauri::{Emitter, Manager};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -624,10 +629,8 @@ fn build_fallback_preset_sequence(
             continue;
         }
 
-        if candidate
-            .to_provider_config()
-            .validate_for_request()
-            .is_ok()
+        if matches!(candidate.provider_kind, providers::ProviderKind::ReadaniAi)
+            || candidate.to_provider_config().validate_for_request().is_ok()
         {
             ordered.push(candidate);
         }
@@ -692,6 +695,9 @@ fn should_retry_with_fallback(error: &str) -> bool {
     if normalized.contains("could not save this page locally")
         || normalized.contains("could not save these results locally")
         || normalized.contains("could not read the local translation cache")
+        || normalized.contains("active readani subscription is required")
+        || normalized.contains("storekit did not return subscription proof")
+        || normalized.contains("subscription transaction")
     {
         return false;
     }
@@ -1019,6 +1025,35 @@ fn settings_language_to_target_language(language: &SettingsLanguage) -> TargetLa
     }
 }
 
+async fn request_preset_chat_completion(
+    preset: &TranslationPreset,
+    temperature: f32,
+    system_prompt: &str,
+    user_prompt: &str,
+    request_id: Option<&str>,
+) -> Result<String, String> {
+    let provider = preset.to_provider_config();
+    if matches!(provider.kind, providers::ProviderKind::ReadaniAi) {
+        return readani_gateway::request_readani_chat_completion(
+            &preset.model,
+            system_prompt,
+            user_prompt,
+            request_id,
+        )
+        .await;
+    }
+
+    request_chat_completion(
+        &provider,
+        &preset.model,
+        temperature,
+        preset_reasoning_mode(preset),
+        system_prompt,
+        user_prompt,
+    )
+    .await
+}
+
 async fn run_preset_test(
     preset: TranslationPreset,
     target_language: &TargetLanguage,
@@ -1033,14 +1068,12 @@ async fn run_preset_test(
             detail: None,
         };
     }
-    let provider = normalized.to_provider_config();
-    let result = request_chat_completion(
-        &provider,
-        &normalized.model,
+    let result = request_preset_chat_completion(
+        &normalized,
         0.0,
-        preset_reasoning_mode(&normalized),
         build_selection_translation_system_prompt(),
         &build_preset_test_prompt(target_language),
+        None,
     )
     .await;
 
@@ -1219,7 +1252,11 @@ async fn list_preset_models(
 ) -> Result<Vec<String>, String> {
     let saved_settings = load_app_settings(&handle)?;
     let merged = merge_saved_preset_credentials(&saved_settings.presets, preset);
-    let provider = merged.normalized().to_provider_config();
+    let normalized = merged.normalized();
+    if matches!(normalized.provider_kind, providers::ProviderKind::ReadaniAi) {
+        return readani_gateway::list_readani_models().await;
+    }
+    let provider = normalized.to_provider_config();
     list_models(&provider).await
 }
 
@@ -1261,11 +1298,9 @@ async fn translate_page_text_with_preset(
         return Ok((entry.translated_text.clone(), true));
     }
 
-    let translated_text = request_chat_completion(
-        &provider,
-        &preset.model,
+    let translated_text = request_preset_chat_completion(
+        preset,
         temperature,
-        preset_reasoning_mode(preset),
         &build_page_translation_system_prompt(),
         &build_page_translation_prompt(
             target_language,
@@ -1273,6 +1308,7 @@ async fn translate_page_text_with_preset(
             previous_context.trim(),
             next_context.trim(),
         ),
+        None,
     )
     .await?;
     let translated_text = translated_text.trim().to_string();
@@ -2398,22 +2434,21 @@ async fn request_sentence_translations_with_preset(
     temperature: f32,
     target_language: &TargetLanguage,
     sentences: &[TranslateSentence],
+    request_id: Option<&str>,
 ) -> Result<Vec<TranslationResult>, String> {
     if sentences.is_empty() {
         return Ok(Vec::new());
     }
 
-    let provider = preset.to_provider_config();
     let system_prompt = build_system_prompt();
     let user_prompt = build_user_prompt(target_language, sentences);
 
-    let mut content = request_chat_completion(
-        &provider,
-        &preset.model,
+    let mut content = request_preset_chat_completion(
+        preset,
         temperature,
-        preset_reasoning_mode(preset),
         &system_prompt,
         &user_prompt,
+        request_id,
     )
     .await?;
     let mut parsed = parse_translation_json(&content);
@@ -2425,13 +2460,13 @@ async fn request_sentence_translations_with_preset(
             target_language.code,
             serde_json::to_string(sentences).unwrap_or_else(|_| "[]".to_string())
         );
-        content = request_chat_completion(
-            &provider,
-            &preset.model,
+        let strict_request_id = request_id.map(|value| format!("{value}-strict"));
+        content = request_preset_chat_completion(
+            preset,
             temperature,
-            preset_reasoning_mode(preset),
             &system_prompt,
             &strict_user_prompt,
+            strict_request_id.as_deref(),
         )
         .await?;
         parsed = parse_translation_json(&content);
@@ -2571,6 +2606,7 @@ async fn openrouter_translate(
             temperature,
             &target_language,
             &still_pending,
+            request_id.as_deref(),
         )
         .await
         {
@@ -2694,17 +2730,15 @@ async fn openrouter_word_lookup(
             let target_language = target_language.clone();
 
             async move {
-                let provider = preset.to_provider_config();
                 let system_prompt = build_word_lookup_system_prompt();
                 let user_prompt = build_word_lookup_prompt(&word, &target_language);
 
-                let content = request_chat_completion(
-                    &provider,
-                    &preset.model,
+                let content = request_preset_chat_completion(
+                    &preset,
                     0.0,
-                    preset_reasoning_mode(&preset),
                     &system_prompt,
                     &user_prompt,
+                    None,
                 )
                 .await?;
 
@@ -3203,6 +3237,9 @@ pub fn run() {
             save_app_settings,
             get_translation_providers,
             save_translation_providers,
+            get_readani_subscription_status,
+            purchase_readani_subscription,
+            restore_readani_subscription,
             list_provider_models,
             list_preset_models,
             translate_page_text,

@@ -64,6 +64,7 @@ export const PRESET_PROVIDER_OPTIONS: Array<{
   value: TranslationProviderKind;
   label: string;
 }> = [
+  { value: "readani-ai", label: "readani AI" },
   { value: "openrouter", label: "OpenRouter" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "ollama", label: "Ollama" },
@@ -83,6 +84,7 @@ export const PRESET_PROVIDER_OPTIONS: Array<{
 export const SAVED_API_KEY_MASK = "**************";
 
 const PROVIDER_LABELS: Record<TranslationProviderKind, string> = {
+  "readani-ai": "readani AI",
   openrouter: "OpenRouter",
   deepseek: "DeepSeek",
   ollama: "Ollama",
@@ -100,6 +102,7 @@ const PROVIDER_LABELS: Record<TranslationProviderKind, string> = {
 };
 
 const DEFAULT_MODELS: Record<TranslationProviderKind, string> = {
+  "readani-ai": "general-fast",
   openrouter: "openrouter/free",
   deepseek: "deepseek-chat",
   ollama: "llama3.2",
@@ -146,6 +149,7 @@ type AppSettingsLike<TPreset extends PresetLike> = {
 };
 
 const LEGACY_PROVIDER_KIND_BY_CANONICAL: Record<TranslationProviderKind, string> = {
+  "readani-ai": "readani-ai",
   openrouter: "open-router",
   deepseek: "deep-seek",
   ollama: "ollama",
@@ -163,6 +167,7 @@ const LEGACY_PROVIDER_KIND_BY_CANONICAL: Record<TranslationProviderKind, string>
 };
 
 const CANONICAL_PROVIDER_KIND_BY_VARIANT: Record<string, TranslationProviderKind> = {
+  "readani-ai": "readani-ai",
   openrouter: "openrouter",
   "open-router": "openrouter",
   deepseek: "deepseek",
@@ -705,7 +710,10 @@ export function normalizePresetDraft(
   presets: TranslationPreset[]
 ): TranslationPreset {
   const providerKind = normalizeProviderKind(preset.providerKind);
-  const normalizedModel = preset.model.trim();
+  const normalizedModel =
+    providerKind === "readani-ai"
+      ? preset.model.trim() || DEFAULT_MODELS[providerKind]
+      : preset.model.trim();
   const autoLabel = buildPresetLabel(providerKind, normalizedModel);
   const otherLabels = presets
     .filter((candidate) => candidate.id !== preset.id)
@@ -719,7 +727,7 @@ export function normalizePresetDraft(
     model: normalizedModel,
     codingPlan: Boolean(preset.codingPlan),
     baseUrl: (() => {
-      if (providerKind === "openrouter") {
+      if (providerKind === "openrouter" || providerKind === "readani-ai") {
         return undefined;
       }
 
@@ -815,7 +823,7 @@ export function createPresetDraft(
       label: "",
       providerKind,
       baseUrl: DEFAULT_BASE_URLS[providerKind],
-      model: "",
+      model: providerKind === "readani-ai" ? DEFAULT_MODELS[providerKind] : "",
     },
     presets
   );

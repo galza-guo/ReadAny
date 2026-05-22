@@ -91,6 +91,7 @@ import {
   savePdfNavigationPrefs,
 } from "./lib/pdfNavigationPrefs";
 import { canListModels } from "./lib/providerForm";
+import { READANI_SUBSCRIPTIONS_ENABLED } from "./lib/buildChannel";
 import { getDocumentProgressSnapshot } from "./lib/readingProgress";
 import { clampPdfManualScale, type PdfZoomMode } from "./lib/readerLayout";
 import { formatPageCountLabel } from "./lib/pageCountLabel";
@@ -181,6 +182,7 @@ import type {
   PageTranslationState,
   PresetSaveStatus,
   PresetTestResult,
+  ReadaniSubscriptionStatus,
   RecentBook,
   Rect,
   TranslationFallbackTrace,
@@ -687,6 +689,13 @@ function AppContent() {
     useState<Record<string, boolean>>({});
   const [testAllPresetsRunning, setTestAllPresetsRunning] =
     useState<boolean>(false);
+  const [readaniSubscriptionStatus, setReadaniSubscriptionStatus] =
+    useState<ReadaniSubscriptionStatus | null>(null);
+  const [readaniSubscriptionLoading, setReadaniSubscriptionLoading] =
+    useState(false);
+  const [readaniSubscriptionAction, setReadaniSubscriptionAction] = useState<
+    "purchase" | "restore" | "refresh" | null
+  >(null);
   const [scrollToTranslationPage, setScrollToTranslationPage] = useState<
     number | null
   >(null);
@@ -3099,6 +3108,110 @@ function AppContent() {
     }
   }, [showToast]);
 
+  const refreshReadaniSubscriptionStatus = useCallback(
+    async (options?: { quiet?: boolean }) => {
+      if (!READANI_SUBSCRIPTIONS_ENABLED) {
+        return;
+      }
+
+      setReadaniSubscriptionLoading(true);
+      setReadaniSubscriptionAction((current) => current ?? "refresh");
+
+      try {
+        const status = (await invoke(
+          "get_readani_subscription_status",
+        )) as ReadaniSubscriptionStatus;
+        setReadaniSubscriptionStatus(status);
+
+        if (!options?.quiet && status.isActive) {
+          showToast({
+            message: t("toast.polyglotActive"),
+            tone: "success",
+            durationMs: 3200,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to check readani subscription:", error);
+        if (!options?.quiet) {
+          showToast({
+            message: t("toast.polyglotCheckFailed"),
+            detail: getErrorMessage(error),
+            tone: "error",
+            durationMs: 4200,
+          });
+        }
+      } finally {
+        setReadaniSubscriptionLoading(false);
+        setReadaniSubscriptionAction((current) =>
+          current === "refresh" ? null : current,
+        );
+      }
+    },
+    [showToast],
+  );
+
+  const purchaseReadaniSubscription = useCallback(async () => {
+    if (!READANI_SUBSCRIPTIONS_ENABLED) {
+      return;
+    }
+
+    setReadaniSubscriptionAction("purchase");
+    try {
+      const status = (await invoke(
+        "purchase_readani_subscription",
+      )) as ReadaniSubscriptionStatus;
+      setReadaniSubscriptionStatus(status);
+      if (status.isActive) {
+        showToast({
+          message: t("toast.polyglotActive"),
+          tone: "success",
+          durationMs: 3200,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to purchase readani subscription:", error);
+      showToast({
+        message: t("toast.polyglotPurchaseFailed"),
+        detail: getErrorMessage(error),
+        tone: "error",
+        durationMs: 4200,
+      });
+    } finally {
+      setReadaniSubscriptionAction(null);
+    }
+  }, [showToast]);
+
+  const restoreReadaniSubscription = useCallback(async () => {
+    if (!READANI_SUBSCRIPTIONS_ENABLED) {
+      return;
+    }
+
+    setReadaniSubscriptionAction("restore");
+    try {
+      const status = (await invoke(
+        "restore_readani_subscription",
+      )) as ReadaniSubscriptionStatus;
+      setReadaniSubscriptionStatus(status);
+      if (status.isActive) {
+        showToast({
+          message: t("toast.polyglotActive"),
+          tone: "success",
+          durationMs: 3200,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to restore readani subscription:", error);
+      showToast({
+        message: t("toast.polyglotRestoreFailed"),
+        detail: getErrorMessage(error),
+        tone: "error",
+        durationMs: 4200,
+      });
+    } finally {
+      setReadaniSubscriptionAction(null);
+    }
+  }, [showToast]);
+
   const handleOpenSettings = useCallback(
     (initialTab?: unknown) => {
       const nextInitialTab = normalizeSettingsTab(initialTab);
@@ -3136,6 +3249,14 @@ function AppContent() {
 
     void refreshTranslationCacheSummary();
   }, [refreshTranslationCacheSummary, settingsOpen]);
+
+  useEffect(() => {
+    if (!settingsOpen || !READANI_SUBSCRIPTIONS_ENABLED) {
+      return;
+    }
+
+    void refreshReadaniSubscriptionStatus({ quiet: true });
+  }, [refreshReadaniSubscriptionStatus, settingsOpen]);
 
   const showTranslationSetupToast = useCallback(() => {
     showToast({
@@ -6626,6 +6747,12 @@ function AppContent() {
     onFetchPresetModels: handleFetchPresetModels,
     onTestPreset: handleTestPreset,
     onTestAllPresets: handleTestAllPresets,
+    subscriptionStatus: readaniSubscriptionStatus,
+    subscriptionLoading: readaniSubscriptionLoading,
+    subscriptionAction: readaniSubscriptionAction,
+    onRefreshReadaniSubscription: refreshReadaniSubscriptionStatus,
+    onPurchaseReadaniSubscription: purchaseReadaniSubscription,
+    onRestoreReadaniSubscription: restoreReadaniSubscription,
     onCheckForUpdates: () => {
       void handleCheckForUpdates("manual");
     },

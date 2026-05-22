@@ -9,6 +9,8 @@ import type { SettingsDialogContentProps } from "./SettingsDialogContent";
 (globalThis as typeof globalThis & { __READANI_APP_VERSION__: string }).__READANI_APP_VERSION__ = "test";
 (globalThis as typeof globalThis & { __READANI_BUILD_TIMESTAMP__: string }).__READANI_BUILD_TIMESTAMP__ =
   "2026-01-01T00:00:00.000Z";
+(globalThis as typeof globalThis & { __READANI_BUILD_CHANNEL__: string }).__READANI_BUILD_CHANNEL__ =
+  "github";
 
 const { SettingsDialogContent } = await import("./SettingsDialogContent");
 
@@ -121,6 +123,20 @@ describe("SettingsDialogContent", () => {
     expect(settingsDialogSource).toContain("<Plugs");
     expect(settingsDialogSource).toContain("<Database");
     expect(settingsDialogSource).toContain("<Info");
+  });
+
+  test("hides the managed readani AI provider unless the App Store channel enables it", () => {
+    expect(settingsDialogSource).toContain("READANI_MANAGED_GATEWAY_ENABLED");
+    expect(settingsDialogSource).toContain("visiblePresetProviderOptions");
+    expect(settingsDialogSource).toContain('provider.value !== "readani-ai"');
+  });
+
+  test("includes App Store-only Polyglot subscription controls", () => {
+    expect(settingsDialogSource).toContain("READANI_SUBSCRIPTIONS_ENABLED");
+    expect(settingsDialogSource).toContain("settings-polyglot-panel");
+    expect(settingsDialogSource).toContain("onPurchaseReadaniSubscription");
+    expect(settingsDialogSource).toContain("onRestoreReadaniSubscription");
+    expect(settingsDialogSource).toContain("subscriptionStatus?.displayPrice");
   });
 
   test("renders app language and translate-to labels without helper copy", () => {

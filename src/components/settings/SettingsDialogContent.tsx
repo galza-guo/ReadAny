@@ -61,11 +61,16 @@ import {
 	getLanguageSelfLabel,
 	SUPPORTED_LANGUAGE_COUNT,
 } from "../../lib/languageOptions";
+import {
+	READANI_MANAGED_GATEWAY_ENABLED,
+	READANI_SUBSCRIPTIONS_ENABLED,
+} from "../../lib/buildChannel";
 import { canListModels } from "../../lib/providerForm";
 import type {
 	PresetSaveStatus,
 	PresetTestResult,
 	ProviderReasoningMode,
+	ReadaniSubscriptionStatus,
 	ThemeMode,
 	TranslationCacheSummary,
 	TranslationPreset,
@@ -88,6 +93,11 @@ const SETTINGS_TABS = new Set<SettingsTab>([
 	"cache",
 	"about",
 ]);
+
+const visiblePresetProviderOptions = PRESET_PROVIDER_OPTIONS.filter(
+	(provider) =>
+		READANI_MANAGED_GATEWAY_ENABLED || provider.value !== "readani-ai",
+);
 
 function normalizeSettingsTab(value: unknown): SettingsTab {
 	return typeof value === "string" && SETTINGS_TABS.has(value as SettingsTab)
@@ -137,6 +147,12 @@ export type SettingsDialogContentProps = {
 	) => void | Promise<void>;
 	onTestPreset: (presetId: string) => void | Promise<void>;
 	onTestAllPresets: () => void | Promise<void>;
+	subscriptionStatus?: ReadaniSubscriptionStatus | null;
+	subscriptionLoading?: boolean;
+	subscriptionAction?: "purchase" | "restore" | "refresh" | null;
+	onRefreshReadaniSubscription?: () => void | Promise<void>;
+	onPurchaseReadaniSubscription?: () => void | Promise<void>;
+	onRestoreReadaniSubscription?: () => void | Promise<void>;
 	onCheckForUpdates: () => void;
 	onOpenLatestRelease: () => void;
 	updateActionsEnabled?: boolean;
@@ -425,6 +441,23 @@ function formatCacheSize(bytes: number) {
 	return `${rounded} ${units[unitIndex]}`;
 }
 
+function formatSubscriptionExpiry(expiresAt?: string) {
+	if (!expiresAt) {
+		return null;
+	}
+
+	const date = new Date(expiresAt);
+	if (Number.isNaN(date.getTime())) {
+		return null;
+	}
+
+	return new Intl.DateTimeFormat(undefined, {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+	}).format(date);
+}
+
 export function SettingsDialogContent({
 	settings,
 	initialTab = "general",
@@ -460,6 +493,12 @@ export function SettingsDialogContent({
 	onFetchPresetModels,
 	onTestPreset,
 	onTestAllPresets,
+	subscriptionStatus = null,
+	subscriptionLoading = false,
+	subscriptionAction = null,
+	onRefreshReadaniSubscription,
+	onPurchaseReadaniSubscription,
+	onRestoreReadaniSubscription,
 	onCheckForUpdates,
 	onOpenLatestRelease,
 	updateActionsEnabled = true,
@@ -530,6 +569,13 @@ export function SettingsDialogContent({
 		? settings.presets.find((preset) => preset.id === pendingDeletePresetId)
 		: undefined;
 	const cacheActionInProgress = translationCacheActionTarget !== null;
+	const subscriptionExpiry = formatSubscriptionExpiry(
+		subscriptionStatus?.expiresAt,
+	);
+	const subscriptionPrice =
+		subscriptionStatus?.displayPrice || t("settings.polyglotPricePending");
+	const subscriptionActionInProgress =
+		subscriptionLoading || subscriptionAction !== null;
 
 	const editingPresetApiKeyInput = editingPreset
 		? (presetApiKeyDrafts[editingPreset.id] ?? "")
@@ -948,6 +994,95 @@ export function SettingsDialogContent({
 
 				<Tabs.Content className="settings-content" forceMount value="providers">
 					<div className="settings-layout">
+						{READANI_SUBSCRIPTIONS_ENABLED ? (
+							<div className="settings-block settings-polyglot-panel">
+								<div className="settings-polyglot-copy">
+									<span className="settings-polyglot-kicker type-meta">
+										{t("settings.polyglotKicker")}
+									</span>
+									<div className="settings-polyglot-title-row">
+										<span className="settings-polyglot-title type-section-title">
+											{subscriptionStatus?.displayName ||
+												t("settings.polyglotTitle")}
+										</span>
+										<span
+											className={`settings-polyglot-status ${
+												subscriptionStatus?.isActive
+													? "is-active"
+													: "is-inactive"
+											}`}
+										>
+											{subscriptionStatus?.isActive
+												? t("settings.polyglotActive")
+												: t("settings.polyglotInactive")}
+										</span>
+									</div>
+									<span className="settings-polyglot-detail type-meta">
+										{subscriptionStatus?.isActive && subscriptionExpiry
+											? t("settings.polyglotRenews", {
+													date: subscriptionExpiry,
+												})
+											: subscriptionStatus?.message ||
+												t("settings.polyglotDescription")}
+									</span>
+									<span className="settings-polyglot-price type-pane-title">
+										{subscriptionPrice}
+									</span>
+								</div>
+								<div className="settings-polyglot-actions">
+									<button
+										className="btn btn-primary settings-polyglot-primary"
+										disabled={
+											subscriptionActionInProgress ||
+											Boolean(subscriptionStatus?.isActive)
+										}
+										onClick={() => {
+											void Promise.resolve(
+												onPurchaseReadaniSubscription?.(),
+											).catch(() => {});
+										}}
+										type="button"
+									>
+										{subscriptionAction === "purchase"
+											? t("settings.polyglotPurchasing")
+											: subscriptionStatus?.isActive
+												? t("settings.polyglotActive")
+												: t("settings.polyglotSubscribe")}
+									</button>
+									<div className="settings-polyglot-secondary-actions">
+										<button
+											className="btn btn-quiet-action"
+											disabled={subscriptionActionInProgress}
+											onClick={() => {
+												void Promise.resolve(
+													onRestoreReadaniSubscription?.(),
+												).catch(() => {});
+											}}
+											type="button"
+										>
+											{subscriptionAction === "restore"
+												? t("settings.polyglotRestoring")
+												: t("settings.polyglotRestore")}
+										</button>
+										<button
+											className="btn btn-quiet-action"
+											disabled={subscriptionActionInProgress}
+											onClick={() => {
+												void Promise.resolve(
+													onRefreshReadaniSubscription?.(),
+												).catch(() => {});
+											}}
+											type="button"
+										>
+											{subscriptionAction === "refresh" || subscriptionLoading
+												? t("settings.polyglotRefreshing")
+												: t("common.reload")}
+										</button>
+									</div>
+								</div>
+							</div>
+						) : null}
+
 						<div className="settings-block settings-block-providers">
 							<div className="settings-toolbar">
 								<div className="settings-toolbar-heading">
@@ -996,7 +1131,7 @@ export function SettingsDialogContent({
 												sideOffset={8}
 											>
 												<div className="settings-provider-picker-list">
-													{PRESET_PROVIDER_OPTIONS.map((provider) => (
+													{visiblePresetProviderOptions.map((provider) => (
 														<Fragment key={provider.value}>
 															{provider.value === "openai-compatible" ? (
 																<div className="settings-provider-picker-divider" />
@@ -1194,7 +1329,7 @@ export function SettingsDialogContent({
 																			position="popper"
 																		>
 																			<Select.Viewport>
-																				{PRESET_PROVIDER_OPTIONS.map(
+																				{visiblePresetProviderOptions.map(
 																					(provider) => (
 																						<Select.Item
 																							key={provider.value}

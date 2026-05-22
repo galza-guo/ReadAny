@@ -155,6 +155,21 @@ describe("app settings helpers", () => {
     expect(getDefaultModelForProvider("openrouter")).toBe("openrouter/free");
   });
 
+  test("starts a readani AI preset as managed gateway access", () => {
+    const preset = createPresetDraft("readani-ai", []);
+
+    expect(normalizeProviderKind("readani-ai")).toBe("readani-ai");
+    expect(serializeProviderKindForCommand("readani-ai")).toBe("readani-ai");
+    expect(getDefaultModelForProvider("readani-ai")).toBe("general-fast");
+    expect(providerUsesApiKey("readani-ai")).toBe(false);
+    expect(providerUsesEditableBaseUrl("readani-ai")).toBe(false);
+    expect(preset.providerKind).toBe("readani-ai");
+    expect(preset.model).toBe("general-fast");
+    expect(preset.baseUrl).toBeUndefined();
+    expect(preset.apiKeyConfigured).toBeFalsy();
+    expect(preset.label).toBe("readani AI · general-fast");
+  });
+
   test("uses llama3.2 as the Ollama model placeholder and local base url default", () => {
     expect(getDefaultModelForProvider("ollama")).toBe("llama3.2");
     expect(getDefaultBaseUrlForProvider("ollama")).toBe("http://localhost:11434/v1");

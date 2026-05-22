@@ -155,6 +155,7 @@ impl TranslationPreset {
 
 pub fn preset_reasoning_mode(preset: &TranslationPreset) -> Option<&ProviderReasoningMode> {
     match preset.provider_kind {
+        ProviderKind::ReadaniAi => None,
         ProviderKind::DeepSeek => preset.thinking.as_ref(),
         ProviderKind::OpenRouter | ProviderKind::Ollama => preset.reasoning.as_ref(),
         ProviderKind::OpenAi
@@ -372,6 +373,7 @@ pub fn migrate_legacy_translation_providers(
 
 pub fn build_preset_label(provider_kind: &ProviderKind, model: &str) -> String {
     let provider_label = match provider_kind {
+        ProviderKind::ReadaniAi => "readani AI",
         ProviderKind::OpenRouter => "OpenRouter",
         ProviderKind::DeepSeek => "DeepSeek",
         ProviderKind::Ollama => "Ollama",
@@ -467,6 +469,7 @@ fn default_language_label(code: &str) -> &str {
 
 fn normalize_base_url(base_url: Option<&str>, provider_kind: &ProviderKind) -> Option<String> {
     match provider_kind {
+        ProviderKind::ReadaniAi => None,
         ProviderKind::DeepSeek => {
             normalize_optional_string(base_url).or_else(|| Some(DEEPSEEK_BASE_URL.to_string()))
         }
@@ -559,6 +562,7 @@ fn normalize_required_string(value: Option<&str>) -> Option<String> {
 
 fn build_preset_id_seed(provider_kind: &ProviderKind, model: &str) -> String {
     let provider_seed = match provider_kind {
+        ProviderKind::ReadaniAi => "readani-ai",
         ProviderKind::OpenRouter => "openrouter",
         ProviderKind::DeepSeek => "deepseek",
         ProviderKind::Ollama => "ollama",
@@ -635,6 +639,7 @@ fn matches_legacy_active_provider(
     legacy_active_provider_id: &str,
 ) -> bool {
     match preset.provider_kind {
+        ProviderKind::ReadaniAi => false,
         ProviderKind::OpenRouter => legacy_active_provider_id == "openrouter",
         ProviderKind::DeepSeek => legacy_active_provider_id == "deepseek",
         ProviderKind::Ollama => legacy_active_provider_id == "ollama",
@@ -654,6 +659,7 @@ fn matches_legacy_active_provider(
 
 fn default_model_for_provider_kind(provider_kind: &ProviderKind) -> &'static str {
     match provider_kind {
+        ProviderKind::ReadaniAi => "general-fast",
         ProviderKind::OpenRouter => DEFAULT_MODEL,
         ProviderKind::DeepSeek => "deepseek-chat",
         ProviderKind::Ollama => "llama3.2",
@@ -675,6 +681,7 @@ fn is_seeded_legacy_placeholder_preset(preset: &TranslationPreset) -> bool {
     let expected_model = default_model_for_provider_kind(&preset.provider_kind);
     let expected_id = slugify(&build_preset_id_seed(&preset.provider_kind, expected_model));
     let expected_base_url = match preset.provider_kind {
+        ProviderKind::ReadaniAi => None,
         ProviderKind::DeepSeek => Some(DEEPSEEK_BASE_URL.to_string()),
         ProviderKind::Ollama => Some(OLLAMA_BASE_URL.to_string()),
         ProviderKind::OpenRouter
@@ -787,6 +794,7 @@ mod tests {
             auto_fallback_enabled: true,
             auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
+            accent_color: Default::default(),
             presets: vec![TranslationPreset {
                 id: "openrouter-default".to_string(),
                 label: "".to_string(),
@@ -824,6 +832,7 @@ mod tests {
             auto_fallback_enabled: false,
             auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
+            accent_color: Default::default(),
             presets: vec![],
         };
 
@@ -842,6 +851,7 @@ mod tests {
             auto_fallback_enabled: false,
             auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
+            accent_color: Default::default(),
             presets: vec![TranslationPreset {
                 id: "ollama".to_string(),
                 label: "".to_string(),
@@ -868,6 +878,39 @@ mod tests {
     }
 
     #[test]
+    fn normalization_treats_readani_ai_as_managed_gateway_access() {
+        let settings = AppSettings {
+            theme: AppTheme::System,
+            app_language: default_app_language(),
+            default_language: SettingsLanguage::default(),
+            active_preset_id: "readani-ai".to_string(),
+            auto_fallback_enabled: false,
+            auto_translate_next_pages: 1,
+            translate_all_slow_mode: false,
+            accent_color: Default::default(),
+            presets: vec![TranslationPreset {
+                id: "readani-ai".to_string(),
+                label: "".to_string(),
+                provider_kind: ProviderKind::ReadaniAi,
+                base_url: Some("https://should-not-be-used.example".to_string()),
+                api_key: Some("ignored".to_string()),
+                api_key_configured: true,
+                model: " general-fast ".to_string(),
+                thinking: None,
+                reasoning: None,
+                coding_plan: false,
+            }],
+        };
+
+        let normalized = settings.normalized();
+
+        assert_eq!(normalized.presets[0].label, "readani AI · general-fast");
+        assert_eq!(normalized.presets[0].base_url, None);
+        assert_eq!(normalized.presets[0].api_key, None);
+        assert!(!normalized.presets[0].api_key_configured);
+    }
+
+    #[test]
     fn normalization_keeps_empty_preset_state() {
         let settings = AppSettings {
             theme: AppTheme::System,
@@ -880,6 +923,7 @@ mod tests {
             auto_fallback_enabled: false,
             auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
+            accent_color: Default::default(),
             presets: vec![],
         };
 
@@ -924,6 +968,7 @@ mod tests {
             auto_fallback_enabled: false,
             auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
+            accent_color: Default::default(),
             presets: vec![
                 TranslationPreset {
                     id: "openrouter-openrouter-free".to_string(),
@@ -992,6 +1037,7 @@ mod tests {
             auto_fallback_enabled: false,
             auto_translate_next_pages: 1,
             translate_all_slow_mode: false,
+            accent_color: Default::default(),
             presets: vec![TranslationPreset {
                 id: "preset-123".to_string(),
                 label: "Custom".to_string(),

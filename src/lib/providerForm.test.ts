@@ -11,5 +11,6 @@ describe("provider form", () => {
     expect(
       canListModels({ kind: "ollama", baseUrl: "http://localhost:11434/v1" })
     ).toBe(true);
+    expect(canListModels({ kind: "readani-ai" })).toBe(true);
   });
 });

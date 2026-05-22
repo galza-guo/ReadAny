@@ -9,15 +9,15 @@
 3. Choose the desktop gateway trust model.
    Decision: do not expose the shared AI gateway directly to the desktop app. Use StoreKit 2 JWS verification through PersonalSite `/api/readani/*` routes, then call the existing gateway with a server-side token. The key rule is that the desktop app must not embed upstream provider secrets or gateway server tokens.
 4. Configure the gateway for `readani`.
-   Add `readani`-specific app policy, allowed model aliases, rate limits, environment variables, production storage, and usage monitoring.
+   Add `readani`-specific app policy, allowed model aliases, rate limits, environment variables, production storage, and usage monitoring. First server route slice is in progress: PersonalSite now has `/api/readani/models` and `/api/readani/chat` wrappers that verify StoreKit transaction JWS before using the shared gateway.
 5. Define paid entitlement rules.
    Keep BYOK free. Make `readani`'s proprietary AI gateway and premium accent colors subscription features. Leave exact usage caps and paywall thresholds for a later product pass.
 6. Implement Apple subscriptions.
-   Add Mac App Store auto-renewable subscription products in App Store Connect, wire StoreKit into the Tauri app, support purchase / restore / subscription status, and prepare sandbox/TestFlight billing tests.
+   Add Mac App Store auto-renewable subscription products in App Store Connect, wire StoreKit into the Tauri app, support purchase / restore / subscription status, and prepare sandbox/TestFlight billing tests. Current product ID: `readani.polyglot.monthly`; App Apple ID: `6771291039`; App Store Connect subscription numeric ID: `22104132`.
 7. Connect subscription status to gateway access.
-   The PersonalSite `readani` backend must verify an active StoreKit 2 subscription before allowing proprietary AI usage.
+   The PersonalSite `readani` backend must verify an active StoreKit 2 subscription before allowing proprietary AI usage. The app-side managed provider now fetches the StoreKit transaction proof and sends it with managed translation requests.
 8. Add in-app product changes.
-   Add provider selection that clearly separates BYOK from `readani` gateway usage, add subscription entry points and paywall UI, gate premium accent colors, and explain the difference between free BYOK and paid managed AI.
+   Add provider selection that clearly separates BYOK from `readani` gateway usage, add subscription entry points and paywall UI, gate premium accent colors, and explain the difference between free BYOK and paid managed AI. First subscription panel is now in Settings for App Store builds, with Polyglot status, subscribe, restore, and refresh actions.
 9. Finish Mac App Store build compliance.
    Disable the in-app updater for App Store builds, keep build-channel gating in Rust and frontend code, prepare privacy disclosures, and write reviewer notes explaining document text transmission and AI usage.
 10. Run release verification.

@@ -49,6 +49,7 @@ export type AccentColor =
   | "teal";
 
 export type TranslationProviderKind =
+  | "readani-ai"
   | "openrouter"
   | "deepseek"
   | "ollama"
@@ -145,6 +146,16 @@ export type PresetSaveState =
 export type PresetSaveStatus = {
   state: PresetSaveState;
   detail?: string;
+};
+
+export type ReadaniSubscriptionStatus = {
+  isActive: boolean;
+  productId?: string;
+  displayName?: string;
+  displayPrice?: string;
+  expiresAt?: string;
+  transactionJws?: string;
+  message?: string;
 };
 
 export type PageTranslationState = {

@@ -3,6 +3,8 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProviderKind {
+    #[serde(rename = "readani-ai")]
+    ReadaniAi,
     #[serde(rename = "openrouter", alias = "open-router")]
     OpenRouter,
     #[serde(rename = "deepseek", alias = "deep-seek")]
@@ -140,7 +142,7 @@ const BIGMODEL_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
 
 impl ProviderKind {
     pub fn uses_api_key(&self) -> bool {
-        !matches!(self, Self::Ollama)
+        !matches!(self, Self::Ollama | Self::ReadaniAi)
     }
 }
 
@@ -201,6 +203,9 @@ impl ProviderConfig {
 
     pub fn models_url(&self) -> Result<String, String> {
         match self.kind {
+            ProviderKind::ReadaniAi => {
+                Err("readani AI models are loaded from the readani gateway.".to_string())
+            }
             ProviderKind::OpenRouter => Ok("https://openrouter.ai/api/v1/models".to_string()),
             ProviderKind::DeepSeek
             | ProviderKind::Ollama
@@ -222,6 +227,9 @@ impl ProviderConfig {
 
     pub fn chat_completions_url(&self) -> Result<String, String> {
         match self.kind {
+            ProviderKind::ReadaniAi => {
+                Err("readani AI does not use direct provider chat completions.".to_string())
+            }
             ProviderKind::OpenRouter => {
                 Ok("https://openrouter.ai/api/v1/chat/completions".to_string())
             }
@@ -297,6 +305,9 @@ impl ProviderConfig {
 
     fn resolved_base_url(&self) -> Result<String, String> {
         match self.kind {
+            ProviderKind::ReadaniAi => {
+                Err("readani AI does not use a configurable base URL.".to_string())
+            }
             ProviderKind::DeepSeek => Ok(self
                 .base_url
                 .as_deref()
@@ -400,6 +411,9 @@ impl ProviderConfig {
 
     pub fn validate_for_request(&self) -> Result<(), String> {
         match self.kind {
+            ProviderKind::ReadaniAi => {
+                Err("readani AI requests must use the readani gateway.".to_string())
+            }
             ProviderKind::OpenRouter => {
                 if self.authorization_token().is_none() {
                     return Err("OpenRouter API key is missing.".to_string());
@@ -633,6 +647,7 @@ fn build_chat_completion_payload(
     });
 
     match provider_kind {
+        ProviderKind::ReadaniAi => {}
         ProviderKind::DeepSeek => {
             if let Some(mode) = reasoning {
                 payload["thinking"] = mode.as_deepseek_thinking();

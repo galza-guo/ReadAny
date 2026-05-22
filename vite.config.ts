@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const buildChannel = process.env.READANI_BUILD_CHANNEL ?? "github";
 const packageJson = JSON.parse(
   readFileSync(new URL("./package.json", import.meta.url), "utf8")
 ) as { version: string };
@@ -15,6 +17,7 @@ export default defineConfig(async () => ({
   define: {
     __READANI_APP_VERSION__: JSON.stringify(packageJson.version),
     __READANI_BUILD_TIMESTAMP__: JSON.stringify(buildTimestamp),
+    __READANI_BUILD_CHANNEL__: JSON.stringify(buildChannel),
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

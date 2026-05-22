@@ -1,11 +1,17 @@
+import type { TranslationProviderKind } from "../types";
+
 type ProviderFormLike = {
-  kind: "openrouter" | "deepseek" | "ollama" | "openai-compatible" | "openai" | "google-gemini" | "siliconflow-cn" | "siliconflow-com" | "dashscope" | "modelscope" | "minimax-io" | "minimaxi" | "zai" | "bigmodel";
+  kind: TranslationProviderKind;
   baseUrl?: string;
   apiKey?: string;
   apiKeyConfigured?: boolean;
 };
 
 export function canListModels(provider: ProviderFormLike) {
+  if (provider.kind === "readani-ai") {
+    return true;
+  }
+
   if (provider.kind === "openrouter" || provider.kind === "deepseek") {
     return Boolean(provider.apiKey?.trim() || provider.apiKeyConfigured);
   }
@@ -17,7 +23,7 @@ export function canListModels(provider: ProviderFormLike) {
   if (
     provider.kind === "openai"
     || provider.kind === "google-gemini"
-    ||     provider.kind === "siliconflow-cn"
+    || provider.kind === "siliconflow-cn"
     || provider.kind === "siliconflow-com"
     || provider.kind === "dashscope"
     || provider.kind === "modelscope"
